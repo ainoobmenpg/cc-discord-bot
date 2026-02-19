@@ -1,8 +1,18 @@
 # CC-Discord-Bot
 
-Claude CodeのようにDiscordで使えるAIボット。
+Discordで使えるAIボット。GLM-4.7と連携して、チャットやスケジュールタスクを実行します。
 
-**現在の実装**: Rust + Serenity + GLM-4.7 Flash
+## これは何？
+
+Discord上でAIとチャットしたり、定期的にタスクを実行させたりするボットです。
+
+### 主な機能
+
+- **チャット**: `!ask` コマンドでAIに質問して答えを得る ✅
+- **スケジュール実行**（予定）: 定期的にAIにタスクを実行させる
+- **能動的通知**（予定）: AIから自発的にメッセージを送る
+
+---
 
 ## 目標
 
@@ -10,14 +20,9 @@ Claude CodeのようにDiscordで使えるAIボット。
 2. ⏳ スケジュール起動ができる（未実装）
 3. ⏳ エージェントから話しかけてくれる（未実装）
 
-## 技術スタック
+---
 
-- **Discord Bot**: Rust + Serenity
-- **LLM**: GLM-4.7 Flash (Z.ai)
-- **HTTP Client**: reqwest
-- **非同期ランタイム**: tokio
-
-## セットアップ
+## クイックスタート
 
 ### 1. 環境変数を設定
 
@@ -54,6 +59,29 @@ DISCORD_BOT_TOKEN=your-discord-bot-token-here
 !ask Rustの特徴は？
 ```
 
+---
+
+## ドキュメントガイド
+
+- **README.md** (このファイル) - 基本的な使い方とクイックスタート
+- **PROJECT_DIRECTION.md** - アーキテクチャと技術的な決定事項
+- **PROGRESS.md** - 詳細な進捗と今後の計画
+- **CONTRIBUTING.md** - 貢献の方法と開発環境のセットアップ
+
+---
+
+## 技術スタック
+
+- **言語**: Rust
+- **Discord Bot**: Serenity 0.12
+- **LLM**: GLM-4.7 Flash (Z.ai)
+- **HTTP Client**: reqwest 0.12
+- **非同期ランタイム**: tokio 1.x
+- **エラーハンドリング**: thiserror 2
+- **ロギング**: tracing 0.1, tracing-subscriber 0.3
+
+---
+
 ## ファイル構造
 
 ```
@@ -61,24 +89,43 @@ cc-discord-bot/
 ├── .env                 # 環境変数（Git管理外・セキュリティ）
 ├── .env.example         # 環境変数のテンプレート（Git管理）
 ├── run.sh               # ボット起動スクリプト
-├── cc-bot/
-│   ├── Cargo.toml       # Rust依存関係
+├── README.md            # このファイル
+├── CONTRIBUTING.md      # 貢献ガイド
+├── PROJECT_DIRECTION.md # アーキテクチャと技術的決定
+├── PROGRESS.md          # 進捗記録
+│
+├── cc-bot/              # Rust Discord Bot
+│   ├── Cargo.toml       # 依存関係
 │   └── src/
 │       ├── main.rs      # Discord Bot本体
 │       └── glm.rs       # GLM APIクライアント
-└── README.md
+│
+├── investigation/       # 調査結果（過去の検討）
+└── references/          # 参考リポジトリ（過去の検討）
 ```
+
+---
 
 ## 進捗
 
+### v0.1.0 - MVP ✅
 - ✅ GLM-4.7 API統合
 - ✅ Discord Bot実装
 - ✅ `!ask` コマンド
 - ✅ エラーハンドリングとロギング
 - ✅ セキュリティ対策（.env方式）
 - ✅ コードレビュー完了
-- ⏳ スケジューラー
-- ⏳ エージェントからの通知
+
+### v0.2.0 - スケジューラー（予定）
+- ⏳ 定期実行機能
+- ⏳ cron式のスケジュール設定
+- ⏳ スケジュール管理コマンド
+
+### v0.3.0 - エージェント通知（予定）
+- ⏳ 能動的な通知
+- ⏳ イベントベースの通知
+
+---
 
 ## トラブルシューティング
 
@@ -107,6 +154,8 @@ cargo clean
 cargo build
 ```
 
+---
+
 ## 開発
 
 ### 依存関係の追加
@@ -129,6 +178,16 @@ cargo test
 tail -f cc-bot/bot.log
 ```
 
+---
+
+## 貢献する方法
+
+バグ報告、機能リクエスト、コードの改善など、貢献を歓迎します！
+
+詳しくは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+
+---
+
 ## アーキテクチャの変更履歴
 
 ### 2026-02-19: Rust + GLM API に変更
@@ -146,6 +205,8 @@ tail -f cc-bot/bot.log
 - GLM-4.7 Flash（無料版）を既に使用可能
 - シンプルなアーキテクチャを優先
 
+---
+
 ## セキュリティ
 
 - ✅ `.env` ファイルで機密情報を管理
@@ -153,16 +214,44 @@ tail -f cc-bot/bot.log
 - ✅ `.env.example` でテンプレートを提供
 - ⚠️ 決して `.env` ファイルをコミットしないでください
 
+---
+
 ## 参考リソース
 
 - [GLM-4.7 ドキュメント](https://docs.z.ai/guides/llm/glm-4)
 - [Serenity ドキュメント](https://docs.rs/serenity/)
 - [Discord Developer Portal](https://discord.com/developers/applications)
+- [Rust公式ドキュメント](https://doc.rust-lang.org/)
+
+---
 
 ## ライセンス
 
 MIT License
 
+---
+
 ## 作者
 
 ainoobmenpg
+
+---
+
+## ロードマップ
+
+### v0.1.0 (完成 ✅)
+- Discordでチャットできる
+- `!ask` コマンド
+- エラーハンドリング
+- ロギング
+- セキュリティ対策
+
+### v0.2.0 (予定)
+- スケジュール実行機能
+- 優先度: 中
+- 予定時期: 未定
+
+### v0.3.0 (予定)
+- 能動的通知機能
+- 優先度: 低
+- 予定時期: 未定
