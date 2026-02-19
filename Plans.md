@@ -13,6 +13,7 @@
 | v0.7.0 | Slash Commands基盤 | ✅ |
 | v0.7.1 | Slash Commands実装完了 | ✅ |
 | v0.7.2 | コード品質改善 | ✅ |
+| v0.8.0 | CLI/HTTP API | ✅ |
 | v0.9.0 | Windows対応 | ✅ |
 
 ---
@@ -69,15 +70,18 @@ BASE_OUTPUT_DIR=/tmp/cc-bot        # ツール出力ディレクトリ（オプ�
 
 ---
 
-## v0.8.0 - CLI/HTTP API cc:TODO
+## v0.8.0 - CLI/HTTP API ✅
 
-**Discord外からの操作を可能にする**
+**完了日時**: 2026-02-20
 
-- [ ] HTTP API基盤（axum）
-- [ ] `POST /api/chat`
-- [ ] `GET/POST/DELETE /api/schedules`
-- [ ] `GET/POST/DELETE /api/memories`
-- [ ] `cc-cli` CLIツール
+### 完了タスク
+
+- [x] HTTP API基盤（axum）
+- [x] `GET /api/health` - ヘルスチェック
+- [x] `POST /api/chat` - GLM-4.7に問い合わせ
+- [x] `GET/POST/DELETE /api/schedules` - スケジュール管理
+- [x] `GET/POST/DELETE /api/memories` - メモリ管理
+- [x] `cc-cli` CLIツール作成
 
 ---
 

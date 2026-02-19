@@ -1,0 +1,3 @@
+[workspace]
+members = ["cc-bot", "cc-cli"]
+resolver = "2"

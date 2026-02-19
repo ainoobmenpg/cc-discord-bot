@@ -1,3 +1,4 @@
+mod api;
 mod commands;
 mod glm;
 mod history;
@@ -314,17 +315,36 @@ async fn main() {
     }
 
     let handler = Handler {
+        glm_client: glm_client.clone(),
+        session_manager: session_manager.clone(),
+        scheduler: scheduler.clone(),
+        schedule_store: schedule_store.clone(),
+        rate_limiter,
+        permission_manager,
+        memory_store: memory_store.clone(),
+        http,
+        processed_messages: Arc::new(Mutex::new(HashSet::new())),
+        base_output_dir: base_output_dir.clone(),
+    };
+
+    // APIサーバーを並行起動
+    let api_port: u16 = env::var("API_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+
+    let api_state = api::ApiState {
         glm_client,
         session_manager,
         scheduler,
         schedule_store,
-        rate_limiter,
-        permission_manager,
         memory_store,
-        http,
-        processed_messages: Arc::new(Mutex::new(HashSet::new())),
         base_output_dir,
     };
+
+    tokio::spawn(async move {
+        api::start_server(api_state, api_port).await;
+    });
 
     info!("Creating client...");
 
