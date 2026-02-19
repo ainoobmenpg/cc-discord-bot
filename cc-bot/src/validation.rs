@@ -2,6 +2,7 @@
 //!
 //! セキュリティ対策として、ユーザー入力のサニタイズと
 //! ファイルパスの検証を提供する。
+#![allow(dead_code)]
 
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;

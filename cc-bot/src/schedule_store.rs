@@ -1,8 +1,10 @@
+#![allow(dead_code)]
+
 use crate::scheduler::{ScheduledTask, ScheduleId, SchedulerError};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// スケジュールストア（JSON永続化）
 #[derive(Debug, Clone, Serialize, Deserialize)]

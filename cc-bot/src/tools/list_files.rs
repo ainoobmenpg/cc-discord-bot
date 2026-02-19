@@ -145,7 +145,7 @@ mod tests {
     use super::*;
 
     fn create_test_context() -> ToolContext {
-        ToolContext::new(123, "test_user".to_string(), 456)
+        ToolContext::new(123, "test_user".to_string(), 456, "output".to_string())
     }
 
     #[test]

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::history::ChatHistory;
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};

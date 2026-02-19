@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::history::ChatMessage;
 use crate::tool::{ToolContext, ToolDefinition, ToolManager};
 use reqwest::Client;

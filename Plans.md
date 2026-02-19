@@ -12,6 +12,7 @@
 | v0.6.0 | メモリシステム | ✅ |
 | v0.7.0 | Slash Commands基盤 | ✅ |
 | v0.7.1 | Slash Commands実装完了 | ✅ |
+| v0.7.2 | コード品質改善 | ✅ |
 | v0.9.0 | Windows対応 | ✅ |
 
 ---
@@ -35,7 +36,20 @@ DISCORD_BOT_TOKEN=xxx
 GLM_API_KEY=xxx
 GLM_MODEL=glm-4.7
 ADMIN_USER_IDS=123,456
+BASE_OUTPUT_DIR=/tmp/cc-bot        # ツール出力ディレクトリ（オプション）
 ```
+
+---
+
+## v0.7.2 - コード品質改善 ✅
+
+**完了日時**: 2026-02-20
+
+### 完了タスク
+
+- [x] 古いプレフィックスコマンド(!xxx)の削除
+- [x] デッドコード警告の解消（#[allow(dead_code)]追加）
+- [x] `base_output_dir` を環境変数から読み込み（BASE_OUTPUT_DIR）
 
 ---
 

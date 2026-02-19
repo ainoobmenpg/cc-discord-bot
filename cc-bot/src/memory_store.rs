@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -276,6 +278,7 @@ impl MemoryStore {
     }
 
     /// ユーザーの全メモリを削除
+    #[allow(dead_code)]
     pub fn clear_memories(&self, user_id: u64) -> Result<usize, MemoryError> {
         let conn = self.conn.lock().map_err(|e| {
             MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
@@ -289,6 +292,7 @@ impl MemoryStore {
     }
 
     /// ユーザーのメモリ数を取得
+    #[allow(dead_code)]
     pub fn count_memories(&self, user_id: u64) -> Result<usize, MemoryError> {
         let conn = self.conn.lock().map_err(|e| {
             MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))

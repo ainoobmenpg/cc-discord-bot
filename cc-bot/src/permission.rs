@@ -1,10 +1,12 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tokio::fs;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// パーミッション定義
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

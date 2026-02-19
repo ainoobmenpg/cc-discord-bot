@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -18,12 +20,12 @@ pub struct ToolContext {
 }
 
 impl ToolContext {
-    pub fn new(user_id: u64, user_name: String, channel_id: u64) -> Self {
+    pub fn new(user_id: u64, user_name: String, channel_id: u64, base_output_dir: String) -> Self {
         Self {
             user_id,
             user_name,
             channel_id,
-            base_output_dir: "output".to_string(),
+            base_output_dir,
         }
     }
 
@@ -232,7 +234,7 @@ mod tests {
     }
 
     fn create_test_context() -> ToolContext {
-        ToolContext::new(123, "test_user".to_string(), 456)
+        ToolContext::new(123, "test_user".to_string(), 456, "output".to_string())
     }
 
     #[test]
@@ -245,14 +247,14 @@ mod tests {
 
     #[test]
     fn test_tool_context_japanese_name() {
-        let ctx = ToolContext::new(456, "太郎".to_string(), 789);
+        let ctx = ToolContext::new(456, "太郎".to_string(), 789, "output".to_string());
         let output_dir = ctx.get_user_output_dir();
         assert!(output_dir.contains("太郎_456"));
     }
 
     #[test]
     fn test_tool_context_special_chars() {
-        let ctx = ToolContext::new(789, "test/user:name".to_string(), 123);
+        let ctx = ToolContext::new(789, "test/user:name".to_string(), 123, "output".to_string());
         let output_dir = ctx.get_user_output_dir();
         // パス区切りの「/」は含まれるが、ユーザー名部分には含まれない
         assert!(!output_dir.contains("test/user"));

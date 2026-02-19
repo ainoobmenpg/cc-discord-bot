@@ -1,6 +1,7 @@
 //! Memory persistence module using SQLite.
 //!
 //! Provides CRUD operations for storing user memories.
+#![allow(dead_code)]
 
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};

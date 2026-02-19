@@ -219,7 +219,7 @@ mod tests {
     }
 
     fn create_test_context() -> ToolContext {
-        ToolContext::new(12345, "test_user".to_string(), 67890)
+        ToolContext::new(12345, "test_user".to_string(), 67890, "output".to_string())
     }
 
     #[test]
