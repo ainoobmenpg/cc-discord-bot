@@ -14,6 +14,7 @@
 | v0.7.1 | Slash Commands実装完了 | ✅ |
 | v0.7.2 | コード品質改善 | ✅ |
 | v0.8.0 | CLI/HTTP API | ✅ |
+| v0.8.1 | APIセキュリティ強化 | ✅ |
 | v0.9.0 | Windows対応 | ✅ |
 
 ---
@@ -89,6 +90,26 @@ BASE_OUTPUT_DIR=/tmp/cc-bot        # ツール出力ディレクトリ（オプ�
 
 - [x] `run.bat` 作成
 - [x] `run.ps1` 作成
+
+---
+
+## v0.8.1 - APIセキュリティ強化 ✅
+
+**完了日時**: 2026-02-20
+
+### 完了タスク
+
+- [x] CORS設定を環境変数で制御（ALLOWED_ORIGINS）
+- [x] APIキー認証ミドルウェア追加（API_KEY）
+- [x] 入力バリデーション（メッセージ長制限: 4000文字）
+- [x] session_managerに#[allow(dead_code)]追加
+
+### 環境変数（追加）
+
+```bash
+ALLOWED_ORIGINS=http://localhost:3000,https://example.com  # 許可するオリジン（カンマ区切り）
+API_KEY=your-api-key                                       # API認証キー（省略時は認証スキップ）
+```
 
 ---
 

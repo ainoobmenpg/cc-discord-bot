@@ -2,16 +2,75 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::{header, Method, StatusCode},
-    response::Json,
+    http::{header, Method, Request, StatusCode},
+    middleware::{self, Next},
+    response::{Json, Response},
     routing::{delete, get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tower_http::cors::{Any, CorsLayer};
-use tracing::{error, info};
+use tower_http::cors::CorsLayer;
+use tracing::{error, info, warn};
+
+/// APIキー認証ミドルウェア
+async fn auth_middleware(
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    // API_KEYが設定されていない場合はスキップ
+    let expected_api_key = std::env::var("API_KEY").unwrap_or_default();
+    if expected_api_key.is_empty() {
+        return Ok(next.run(request).await);
+    }
+
+    // Authorization headerをチェック
+    let auth_header = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok());
+
+    match auth_header {
+        Some(h) if h.starts_with("Bearer ") => {
+            let token = &h[7..];
+            if token == expected_api_key {
+                Ok(next.run(request).await)
+            } else {
+                warn!("Invalid API key attempt");
+                Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "Invalid API key".to_string(),
+                    }),
+                ))
+            }
+        }
+        _ => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Missing or invalid Authorization header".to_string(),
+            }),
+        )),
+    }
+}
+
+/// メッセージ長の最大値
+const MAX_MESSAGE_LENGTH: usize = 4000;
+
+/// 入力バリデーション
+fn validate_message(message: &str) -> Result<(), String> {
+    if message.is_empty() {
+        return Err("Message cannot be empty".to_string());
+    }
+    if message.len() > MAX_MESSAGE_LENGTH {
+        return Err(format!(
+            "Message too long (max {} characters)",
+            MAX_MESSAGE_LENGTH
+        ));
+    }
+    Ok(())
+}
 
 use crate::glm::GLMClient;
 use crate::history::ChatMessage;
@@ -25,6 +84,8 @@ use crate::tool::ToolContext;
 #[derive(Clone)]
 pub struct ApiState {
     pub glm_client: GLMClient,
+    /// 将来的にセッション履歴APIで使用予定
+    #[allow(dead_code)]
     pub session_manager: Arc<Mutex<SessionManager>>,
     pub scheduler: Arc<Scheduler>,
     pub schedule_store: Arc<RwLock<ScheduleStore>>,
@@ -119,24 +180,39 @@ struct ErrorResponse {
 
 /// APIルーターを作成
 pub fn create_router(state: ApiState) -> Router {
-    // CORS設定
+    // CORS設定 - 環境変数から許可するオリジンを取得
+    let allowed_origins = std::env::var("ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(
+            allowed_origins
+                .split(',')
+                .map(|s| s.trim().parse::<axum::http::HeaderValue>())
+                .filter_map(|r| r.ok())
+                .collect::<Vec<_>>(),
+        )
         .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     Router::new()
-        // ヘルスチェック
+        // ヘルスチェック（認証不要）
         .route("/api/health", get(health))
-        // チャット
-        .route("/api/chat", post(chat))
-        // スケジュール
-        .route("/api/schedules", get(list_schedules).post(create_schedule))
-        .route("/api/schedules/{id}", delete(delete_schedule))
-        // メモリ
-        .route("/api/memories", get(list_memories).post(create_memory))
-        .route("/api/memories/search", get(search_memories))
-        .route("/api/memories/{id}", delete(delete_memory))
+        // 認証が必要なルート
+        .nest(
+            "/api",
+            Router::new()
+                // チャット
+                .route("/chat", post(chat))
+                // スケジュール
+                .route("/schedules", get(list_schedules).post(create_schedule))
+                .route("/schedules/{id}", delete(delete_schedule))
+                // メモリ
+                .route("/memories", get(list_memories).post(create_memory))
+                .route("/memories/search", get(search_memories))
+                .route("/memories/{id}", delete(delete_memory))
+                .layer(middleware::from_fn(auth_middleware)),
+        )
         .layer(cors)
         .with_state(Arc::new(state))
 }
@@ -156,6 +232,14 @@ async fn chat(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // 入力バリデーション
+    if let Err(e) = validate_message(&req.message) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: e }),
+        ));
+    }
+
     let user_id = req.user_id.unwrap_or(0);
     let channel_id = req.channel_id.unwrap_or(0);
 
