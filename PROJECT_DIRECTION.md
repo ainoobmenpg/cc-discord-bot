@@ -6,26 +6,25 @@
 
 ## 目標
 
-**OpenClawのように動くClaude Codeを作る**
+**Discordで使えるAIボットを作る**
 
-Claude CodeをDiscord Botとして機能させ、Discordから操作できるようにする。
+Discord Botとして機能し、LLM（GLM-4.7）とやり取りできるようにする。
 
 ---
 
 ## 実現したい機能
 
-### 1. Discordでチャットできる
-- Discordからメッセージを送る → Claude Codeが応答
-- Claude Codeがメッセージを送る → Discordに表示
-- 双方向のコミュニケーション
+### 1. Discordでチャットできる ✅
+- Discordからメッセージを送る → GLM-4.7が応答
+- `!ask` コマンドで質問に回答
 
-### 2. スケジュール起動ができる
-- 定期的にClaude Codeにタスクを実行させる
+### 2. スケジュール起動ができる ⏳
+- 定期的にタスクを実行
 - cron式のスケジュール設定
 - 結果をDiscordに通知
 
-### 3. エージェントから話しかけてくれる
-- Claude Codeが自発的にメッセージを送ってくる
+### 3. エージェントから話しかけてくれる ⏳
+- ボットが自発的にメッセージを送ってくる
 - 非同期な通知
 - イベントドリブンな通知
 
@@ -33,17 +32,21 @@ Claude CodeをDiscord Botとして機能させ、Discordから操作できるよ
 
 ## 技術スタック
 
-### Rust + Serenity
+### Rust + Serenity + GLM-4.7 API
 
 **選択理由**:
-1. **型安全性**: AIが書くコードのバグを防ぐ
+1. **型安全性**: バグを防ぐ
 2. **パフォーマンス**: 高速な実行、メモリ効率が良い
 3. **エラーハンドリング**: `Result<T, E>` で明示的なエラー処理
 4. **並列処理**: 並列処理が得意
+5. **シンプルさ**: 単一言語で完結
 
-**Discordライブラリ**:
+**使用ライブラリ**:
 - **Serenity**: 機能豊富なDiscordライブラリ
-- **Poise**: Serenityの上に構築されたフレームワーク（スラッシュコマンドが簡単）
+- **reqwest**: HTTPクライアント（GLM API呼び出し用）
+- **tokio**: 非同期ランタイム
+- **thiserror**: エラーハンドリング
+- **tracing**: ロギング
 
 ---
 
@@ -57,22 +60,21 @@ Claude CodeをDiscord Botとして機能させ、Discordから操作できるよ
 ┌─────────────────────────────────────────────────────────┐
 │              Rust Discord Bot                          │
 │  ┌────────────────────────────────────────────────────┐ │
-│  │  Serenity / Poise                                  │ │
+│  │  Serenity                                          │ │
 │  │  - メッセージ受信                                   │ │
-│  │  - コマンド処理                                     │ │
+│  │  - コマンド処理 (!ask)                             │ │
 │  │  - レスポンス送信                                   │ │
 │  └────────────────────────────────────────────────────┘ │
 │                          ↓                               │
 │  ┌────────────────────────────────────────────────────┐ │
-│  │  HTTP Client                                        │ │
-│  │  - Claude Code APIを呼び出し                        │ │
-│  │  - ストリーミングレスポンス                          │ │
+│  │  GLM Client (glm.rs)                              │ │
+│  │  - GLM-4.7 API呼び出し                              │ │
+│  │  - エラーハンドリング                                │ │
 │  └────────────────────────────────────────────────────┘ │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│          Claude Code API / SDK                         │
-│  （Node.js/TypeScriptで実装）                          │
+│          GLM-4.7 API (Z.ai)                            │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -82,299 +84,149 @@ Claude CodeをDiscord Botとして機能させ、Discordから操作できるよ
 
 ```
 cc-discord-bot/
-├── rust-bot/              # Rust Discord Bot
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs
-│       ├── discord/       # Discordモジュール
-│       ├── claude/        # Claude Code APIモジュール
-│       └── scheduler/     # スケジューラーモジュール
+├── .env                  # 環境変数（Git管理外）
+├── .env.example          # 環境変数のテンプレート（Git管理）
+├── run.sh                # ボット起動スクリプト
+├── .gitignore            # Git除外設定
+├── README.md             # ユーザー向けドキュメント
+├── PROGRESS.md           # 進捗記録
+├── PROJECT_DIRECTION.md  # このファイル
 │
-├── claude-api/            # Claude Code API（Node.js）
-│   ├── package.json
+├── cc-bot/               # Rust Discord Bot
+│   ├── Cargo.toml        # 依存関係
 │   ├── src/
-│   │   ├── server.ts      # HTTPサーバー
-│   │   └── claude.ts      # Claude Code SDKラッパー
-│   └── tsconfig.json
+│   │   ├── main.rs       # Discord Bot本体
+│   │   └── glm.rs        # GLM APIクライアント
+│   └── target/           # コンパイル済みバイナリ（Git管理外）
 │
-├── investigation/         # 調査結果（既存）
+├── investigation/        # 調査結果（過去の検討）
 │   ├── agent-discord-skills-analysis.md
 │   ├── claude-code-discord-analysis.md
 │   ├── implementation-patterns.md
 │   ├── api-endpoints.md
-│   └── architecture-comparison.md
+│   ├── architecture-comparison.md
+│   └── claude-agent-sdk-analysis.md
 │
-├── PROJECT_DIRECTION.md   # このファイル
-├── README.md
-└── .gitignore
+└── references/           # 参考リポジトリ（過去の検討）
+    ├── agent-discord-skills/
+    └── claude-code-discord/
 ```
 
 ---
 
 ## 実装のステップ
 
-### Phase 1: Claude Code API（Node.js）
+### ✅ Phase 1: 基本実装（完了）
 
-**目的**: Claude Code SDKをHTTP APIとしてラップする
+**目的**: Discord Bot + GLM-4.7 APIの統合
 
-**タスク**:
-1. Claude Code SDKの調査
-   - 何ができるか確認
-   - APIの仕様を理解
-
-2. HTTPサーバーの実装
-   - `POST /chat`: メッセージ送信
-   - `GET /session`: セッション情報
-   - `DELETE /session`: セッション削除
-   - `POST /schedule`: スケジュール登録
-
-3. テスト
-   - curlで動作確認
+**完了したタスク**:
+1. ✅ Rustプロジェクト作成
+2. ✅ SerenityによるDiscord Bot実装
+3. ✅ GLM-4.7 APIクライアント実装
+4. ✅ `!ask` コマンド実装
+5. ✅ エラーハンドリング（`thiserror`）
+6. ✅ ロギング（`tracing`）
+7. ✅ テスト追加
+8. ✅ セキュリティ対策（`.env`方式）
+9. ✅ コードレビュー完了
 
 **依存関係**:
-```json
-{
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "latest",
-    "express": "^4.18.0",
-    "typescript": "^5.0.0"
-  }
-}
+```toml
+[dependencies]
+serenity = { version = "0.12", features = ["client", "gateway", "rustls_backend"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 ```
 
 ---
 
-### Phase 2: Rust Discord Bot
+### ⏳ Phase 2: スケジューラー（未実装）
 
-**目的**: DiscordからClaude Code APIを呼び出すボットを実装
+**目的**: 定期的にGLM-4.7を実行してDiscordに通知
 
-**タスク**:
-1. プロジェクト作成
-   ```bash
-   cargo new cc-discord-bot --bin
-   ```
-
-2. 依存関係追加
-   ```toml
-   [dependencies]
-   serenity = "0.12"
-   tokio = { version = "1.0", features = ["full"] }
-   reqwest = { version = "0.11", features = ["json"] }
-   chrono = "0.4"
-   ```
-
-3. 基本実装
-   - Discord Botの起動
-   - メッセージ受信
-   - Claude Code API呼び出し
-   - レスポンス送信
-
-4. コマンド実装
-   - `/chat`: Claude Codeにチャット
-   - `/status`: セッション状態
-   - `/schedule`: スケジュール管理
-
----
-
-### Phase 3: スケジューラー
-
-**目的**: 定期的にClaude Codeを実行してDiscordに通知
-
-**タスク**:
-1. cronライブラリ選定
-   - **cron**: Rustのcronライブラリ
+**計画中のタスク**:
+1. ライブラリ選定
    - **tokio-cron-scheduler**: Tokioベースのスケジューラー
+   - **cron**: シンプルなcronライブラリ
 
 2. 実装
    - スケジュールの登録
    - 定期実行
    - Discord通知
 
-3. コマンド
+3. コマンド（予定）
    - `/schedule add`: スケジュール追加
    - `/schedule list`: スケジュール一覧
    - `/schedule remove`: スケジュール削除
 
 ---
 
-### Phase 4: エージェント通知
+### ⏳ Phase 3: エージェント通知（未実装）
 
-**目的**: Claude Codeから自発的に通知を送る
+**目的**: ボットから自発的に通知を送る
 
-**タスク**:
-1. WebSocket実装
-   - Claude Code APIからWebSocketで通知を受信
-   - Discordに転送
+**計画中のタスク**:
+1. 通知方法の検討
+   - 定時タスクの結果通知
+   - イベントベースの通知
+   - 外部トリガー
 
-2. イベントハンドリング
-   - タスク完了通知
-   - エラー通知
-   - ステータス更新
-
----
-
-## Claude Code SDKとの統合
-
-### 問題点
-- **Claude Code SDKはNode.js/TypeScriptのみ**
-- Rustから直接呼び出すのは難しい
-
-### 解決策
-1. **HTTP APIとしてClaude Code SDKをラップ**
-   - Node.jsでREST APIサーバーを作る
-   - RustからHTTPで呼び出す
-
-2. **WebSocketでストリーミング**
-   - Claude CodeのストリーミングレスポンスをWebSocketで転送
-   - Rustで受信してDiscordに送信
+2. 実装
+   - 通知キューの管理
+   - Discordへの送信
 
 ---
 
-## Claude Code APIの仕様（予定）
+## アーキテクチャの変更履歴
 
-### POST /chat
+### 2026-02-19: Claude Agent SDK → GLM-4.7 API に変更
 
-**リクエスト**:
-```json
-{
-  "message": "Hello, Claude!",
-  "session_id": "optional-session-id",
-  "options": {
-    "model": "claude-3-5-sonnet-20241022",
-    "max_tokens": 4096,
-    "temperature": 0.7
-  }
-}
-```
+**変更前の計画**:
+- Rust + Node.js の2層アーキテクチャ
+- Claude Agent SDK (Node.js) を HTTP API でラップ
+- Rust Bot → Node.js API → Claude Code
 
-**レスポンス**:
-```json
-{
-  "session_id": "session-id",
-  "message": "Hi! How can I help you?",
-  "tokens_used": 100,
-  "model": "claude-3-5-sonnet-20241022"
-}
-```
+**変更後の実装**:
+- Rustのみのシンプルなアーキテクチャ
+- GLM-4.7 APIを直接呼び出し
+- Rust Bot → GLM-4.7 API
 
-### GET /session
+**理由**:
+1. **APIキーの問題**: Claude Agent SDKにAnthropic APIキーが必要
+2. **既存のリソース**: GLM-4.7 Flash（無料版）を既に使用可能
+3. **シンプルさ**: 単一言語で完結し、メンテナンスが容易
+4. **学習目的**: Rust + 非同期処理の学習に適している
 
-**リクエスト**:
-```
-GET /session?session_id=session-id
-```
-
-**レスポンス**:
-```json
-{
-  "session_id": "session-id",
-  "created_at": "2026-02-19T12:00:00Z",
-  "last_activity": "2026-02-19T12:05:00Z",
-  "message_count": 10
-}
-```
-
-### DELETE /session
-
-**リクエスト**:
-```
-DELETE /session?session_id=session-id
-```
-
-**レスポンス**:
-```json
-{
-  "success": true
-}
-```
-
----
-
-## 依存関係
-
-### Rust
-
-```toml
-[dependencies]
-# Discord
-serenity = "0.12"
-poise = "0.6"
-
-# 非同期ランタイム
-tokio = { version = "1.0", features = ["full"] }
-
-# HTTPクライアント
-reqwest = { version = "0.11", features = ["json"] }
-
-# シリアライゼーション
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# 日付・時刻
-chrono = "0.4"
-
-# スケジューラー
-tokio-cron-scheduler = "0.9"
-
-# 環境変数
-dotenv = "0.15"
-
-# ロギング
-tracing = "0.1"
-tracing-subscriber = "0.3"
-```
-
-### Node.js
-
-```json
-{
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "latest",
-    "express": "^4.18.0",
-    "typescript": "^5.0.0",
-    "@types/express": "^4.17.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.0.0"
-  }
-}
-```
+**削除した計画**:
+- ~~Claude Code API（Node.js）~~
+- ~~HTTP APIサーバー~~
+- ~~WebSocketストリーミング~~
 
 ---
 
 ## 環境変数
 
-### Rust Bot
+### .env ファイル
 
 ```bash
-# Discord
-DISCORD_BOT_TOKEN=your_bot_token_here
-DISCORD_APPLICATION_ID=your_application_id_here
+# GLM API Configuration
+GLM_API_KEY=your-glm-api-key-here
+GLM_MODEL=glm-4.7-flash
 
-# Claude Code API
-CLAUDE_API_URL=http://localhost:3000
-CLAUDE_API_KEY=optional_api_key
-
-# スケジューラー
-SCHEDULER_ENABLED=true
-
-# ロギング
-RUST_LOG=info
+# Discord Bot Configuration
+DISCORD_BOT_TOKEN=your-discord-bot-token-here
 ```
 
-### Claude Code API
-
-```bash
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-
-# サーバー
-PORT=3000
-CLAUDE_API_KEY=optional_api_key
-
-# Claude Code
-CLAUDE_CODE_DEFAULT_MODEL=claude-3-5-sonnet-20241022
-CLAUDE_CODE_MAX_TOKENS=4096
-```
+**セキュリティ**:
+- ✅ `.env` は `.gitignore` で除外
+- ✅ `.env.example` でテンプレートを提供
+- ⚠️ 決して `.env` をコミットしないでください
 
 ---
 
@@ -387,50 +239,52 @@ CLAUDE_CODE_MAX_TOKENS=4096
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
-2. **Node.js & npm**
-   ```bash
-   # macOS
-   brew install node
-
-   # またはnvm
-   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-   nvm install node
-   ```
-
-3. **Discord Developer Account**
+2. **Discord Developer Account**
    - https://discord.com/developers/applications
+
+### MESSAGE CONTENT INTENTの設定
+
+[Discord Developer Portal](https://discord.com/developers/applications) で:
+1. ボットを選択
+2. 「Bot」タブ
+3. 「MESSAGE CONTENT INTENT」をONにする
 
 ---
 
 ## テスト計画
 
-### Unit Test
-- Rustの各モジュールのテスト
-- Node.jsの各関数のテスト
+### ✅ Unit Test（完了）
+- GLMクライアントのテスト
+- Role列挙型のシリアライゼーションテスト
+- エラーハンドリングのテスト
 
-### Integration Test
-- Discord Bot ↔ Claude Code APIの通信テスト
-- スケジューラーのテスト
-
-### Manual Test
-- 実際のDiscordサーバーでテスト
+### ⏳ Integration Test（未実装）
+- Discord Bot ↔ GLM APIの通信テスト
 - エラーハンドリングの確認
+
+### ✅ Manual Test（完了）
+- 実際のDiscordサーバーでテスト
+- `!ask` コマンドの動作確認
 
 ---
 
 ## リリース計画
 
-### v0.1.0 - MVP
+### ✅ v0.1.0 - MVP（完了）
 - Discordでチャットできる
-- 基本的なコマンド
+- `!ask` コマンド
+- エラーハンドリング
+- ロギング
+- セキュリティ対策
 
-### v0.2.0 - スケジューラー
+### ⏳ v0.2.0 - スケジューラー（計画中）
 - スケジュール実行
 - cron式のサポート
+- スケジュール管理コマンド
 
-### v0.3.0 - エージェント通知
+### ⏳ v0.3.0 - エージェント通知（計画中）
 - 自発的な通知
-- WebSocket対応
+- イベントベースの通知
 
 ---
 
@@ -439,11 +293,12 @@ CLAUDE_CODE_MAX_TOKENS=4096
 ### Rust
 - [Rust公式ドキュメント](https://doc.rust-lang.org/)
 - [Serenity](https://github.com/serenity-rs/serenity)
-- [Poise](https://github.com/kangalioo/poise)
+- [tokio](https://tokio.rs/)
+- [reqwest](https://docs.rs/reqwest/)
 
-### Claude Code SDK
-- [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-typescript)
-- [Claude Code Docs](https://docs.claude.com/en/docs/claude-code)
+### GLM API
+- [GLM-4.7 ドキュメント](https://docs.z.ai/guides/llm/glm-4)
+- [Z.ai コンソール](https://console.z.ai/)
 
 ### Discord
 - [Discord Developer Portal](https://discord.com/developers/applications)
@@ -453,18 +308,18 @@ CLAUDE_CODE_MAX_TOKENS=4096
 
 ## 次のステップ
 
-1. **Claude Code SDKの調査**
-   - 公式ドキュメントを確認
-   - サンプルコードを試す
-   - API仕様を理解
+1. **スケジューラーの実装**
+   - tokio-cron-scheduler の調査
+   - スケジュール管理コマンドの設計
+   - 定期実行の実装
 
-2. **Claude Code APIの実装**
-   - Node.jsでHTTPサーバー
-   - SDKのラッパー
+2. **エージェント通知の検討**
+   - 通知方法の設計
+   - イベントハンドリングの検討
 
-3. **Rust Botのプロトタイプ**
-   - シンプルなDiscord Bot
-   - 動作確認
+3. **テストの拡充**
+   - 統合テストの追加
+   - エッジケースのテスト
 
 ---
 
