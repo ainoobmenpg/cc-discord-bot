@@ -28,3 +28,14 @@ Thumbs.db
 
 # Review docs
 REVIEW_*.md
+
+# Node.js
+node_modules/
+cc-api/node_modules/
+
+# OpenClaw session data
+.claude/
+
+# Temporary files
+*.tmp
+*.temp
