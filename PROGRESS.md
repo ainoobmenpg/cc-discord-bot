@@ -1,174 +1,78 @@
-# 進捗記録 - cc-discord-bot
+# 2026-02-19 (午後)
 
-更新日: 2026-02-19
+## CC-Discord-Botプロジェクト進捗
 
----
+### 完了したこと
 
-## 完了したこと
+#### 1. GLM-4.7 API統合完了
+- ✅ GLM-4.7 APIのドキュメントを調査
+- ✅ APIエンドポイントを確認 (`https://api.z.ai/api/paas/v4/chat/completions`)
+- ✅ APIキーを取得・設定
+- ✅ RustでGLMクライアントを実装
 
-### 1. リポジトリ作成
-- GitHub: https://github.com/ainoobmenpg/cc-discord-bot
-- README.md作成
-- .gitignore設定
+#### 2. Discord Bot実装完了
+- ✅ Rust + SerenityでDiscord Botを作成
+- ✅ `!ask` コマンドを実装
+- ✅ GLM-4.7 APIとの統合
+- ✅ メッセージの送受信が正常に動作
 
-### 2. 既存ソリューションの調査（RESEARCH.md）
-- zebbern/claude-code-discord
-- ComposioのDiscordbot MCP
-- agent-discord-skills
-- OpenClawのDiscord連携
+#### 3. 技術スタック決定
+- ✅ Rust + Serenity (Discord Bot)
+- ✅ GLM-4.7 Flash (無料版)
+- ✅ reqwest (HTTPクライアント)
 
-### 3. 参考資料の収集
-- agent-discord-skillsをクローン（/references/agent-discord-skills）
-- claude-code-discordをクローン（/references/claude-code-discord）
+### トラブルシューティング
 
-### 4. 詳細調査（investigation/）
-以下の5つのドキュメントを作成（合計67,773 bytes）:
+#### 問題1: Rustがインストールされていない
+- **解決**: rustupでRustをインストール
 
-- **agent-discord-skills-analysis.md**: 5つのスキルの詳細分析
-- **claude-code-discord-analysis.md**: アーキテクチャと機能の詳細分析
-- **implementation-patterns.md**: 12の実装パターンまとめ
-- **api-endpoints.md**: Discord APIエンドポイント一覧
-- **architecture-comparison.md**: 2つのアプローチの比較
+#### 問題2: APIエンドポイントが間違っていた
+- **解決**: `https://open.bigmodel.cn/...` → `https://api.z.ai/...` に修正
 
-### 5. プロジェクト方針の策定（PROJECT_DIRECTION.md）
-- 目標の明確化
-- 技術スタックの選定（Rust + Serenity）
-- アーキテクチャの設計
-- 実装ステップの計画
+#### 問題3: APIキーが間違っていた
+- **解決**: 正しいAPIキーを取得・設定
 
----
+#### 問題4: レート制限（429）
+- **解決**: glm-4.7-flashを使用（無料版）
 
-## 現在の方針
+#### 問題5: MESSAGE CONTENT INTENT
+- **解決**: Discord Developer Portalで有効化済み
 
-### 目標
-**OpenClawのように動くClaude Codeを作る**
-
-### 実現したい機能
-1. Discordでチャットできる（双方向）
-2. スケジュール起動ができる
-3. エージェントから話しかけてくれる
-
-### 技術スタック
-- **Rust**: Discord Bot実装（Serenity/Poise）
-- **Node.js**: Claude Code SDKのHTTP APIラッパー
-
-### アーキテクチャ
-```
-Discord → Rust Bot → HTTP Client → Claude Code API（Node.js） → Claude Code SDK
-```
-
----
-
-## 次のステップ
-
-### 1. Claude Code SDKの調査
-- 公式ドキュメントを確認
-- SDKで何ができるか把握
-- API仕様を理解
-
-### 2. Claude Code APIの実装
-- Node.jsでHTTPサーバー
-- SDKのラッパー
-- テスト
-
-### 3. Rust Botのプロトタイプ
-- シンプルなDiscord Bot
-- Claude Code API呼び出し
-- 動作確認
-
----
-
-## 学んだこと
-
-### agent-discord-skills
-- SKILL.md + examples.mdの形式
-- Claude Code用スキルとして最適
-- シンプルで理解しやすい
-
-### claude-code-discord
-- 複雑だけど機能豊富
-- Deno + TypeScript
-- 45以上のコマンド、7種類のAIエージェント
-- MCPサーバー統合
-
-### 実装パターン
-- バリデーション: チャンネルID、チャンネル名
-- エラーハンドリング: ユーザーフレンドリーなメッセージ
-- レート制限: 5リクエスト/5秒
-- ページネーション: メッセージの分割取得
-
-### Discord API
-- メッセージ送信: POST /channels/{id}/messages
-- メッセージ取得: GET /channels/{id}/messages
-- チャンネル作成: POST /guilds/{id}/channels
-- 権限のビット値
-- エラーコード
-
----
-
-## 懸念点
-
-### Claude Code SDK
-- SDKがNode.js/TypeScriptのみ対応
-- Rustから直接呼び出せない
-- HTTP APIとしてラップする必要あり
-
-### Rustの学習コスト
-- 所有権（Ownership）の理解が必要
-- ライフタイム（Lifetime）の理解が必要
-- AIが間違ったコードを書きがち
-
-### 開発サイクル
-- Rustのコンパイルが遅い
-- 開発サイクルが長くなる可能性
-
----
-
-## 決定事項
-
-### 技術スタック
-- **Rust**: Discord Bot（Serenity/Poise）
-- **Node.js**: Claude Code SDKのHTTP APIラッパー
-
-### プロジェクト構成
-```
-cc-discord-bot/
-├── rust-bot/          # Rust Discord Bot
-├── claude-api/        # Claude Code API（Node.js）
-├── investigation/     # 調査結果
-├── PROJECT_DIRECTION.md
-├── PROGRESS.md
-└── README.md
-```
-
----
-
-## 今後の予定
-
-### 今後
-1. Claude Code SDKの調査
-2. Claude Code APIの実装
-3. Rust Botのプロトタイプ
-
-### 将来
-- スケジューラーの実装
-- エージェント通知の実装
-- 本番デプロイ
-
----
-
-## コミット履歴
+### ファイル構造
 
 ```
-5800478 Add investigation results: Detailed analysis of agent-discord-skills and claude-code-discord
-65824d8 Initial commit: 調査結果とドキュメントを追加
+cc-bot/
+├── Cargo.toml
+├── src/
+│   ├── main.rs
+│   └── glm.rs
+├── run.sh
+└── bot.log
 ```
 
----
+### 使い方
 
-## リンク
+#### ボットの起動
+```bash
+cd cc-bot
+./run.sh
+```
 
-- GitHub: https://github.com/ainoobmenpg/cc-discord-bot
-- README: /tmp/cc-discord-bot-scan/README.md
-- PROJECT_DIRECTION: /tmp/cc-discord-bot-scan/PROJECT_DIRECTION.md
-- investigation/: /tmp/cc-discord-bot-scan/investigation/
+#### Discordでの使用
+```
+!ask テスト
+!ask 2 + 2は？
+!ask Rustの特徴は？
+```
+
+### 次のステップ
+
+1. スケジューラー機能の追加
+2. エージェントからの通知
+3. エラーハンドリングの改善
+4. ログの整理
+
+### 参考リソース
+
+- [GLM-4.7 ドキュメント](https://docs.z.ai/guides/llm/glm-4.7)
+- [Serenity ドキュメント](https://docs.rs/serenity/)

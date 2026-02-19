@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "updatedAt": "2026-02-19T04:18:19.301Z",
+  "skills": {},
+  "commands": {
+    "work": {
+      "count": 1,
+      "lastUsed": "2026-02-19T03:59:13.781Z"
+    }
+  },
+  "agents": {
+    "claude-code-harness:task-worker": {
+      "count": 1,
+      "lastUsed": "2026-02-19T04:14:47.499Z"
+    }
+  },
+  "hooks": {
+    "session-init": {
+      "triggered": 1,
+      "blocked": 0,
+      "lastTriggered": "2026-02-19T03:59:13.309Z"
+    },
+    "pretooluse-guard": {
+      "triggered": 2,
+      "blocked": 2,
+      "lastTriggered": "2026-02-19T04:18:19.301Z"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+/plan-with-agent
+
+以下の2つのリポジトリについて、徹底的にコードの構造を調査して：
+
+1. /tmp/cc-discord-bot-scan/references/agent-discord-skills
+2. /tmp/cc-discord-bot-scan/references/claude-code-discord
+
+調査してほしいこと：
+
+## agent-discord-skills
+1. すべてのスキルのSKILL.mdとexamples.mdの内容を詳しく分析
+2. 各スキルがどんなAPIエンドポイントを使っているか
+3. スキル間の共通点と相違点
+4. 実装パターン（YAML frontmatter、Markdown構造）
+5. 環境変数の使い方
+6. エラーハンドリングのパターン
+
+## claude-code-discord
+1. プロジェクト全体のアーキテクチャ
+2. 主要なファイルとその役割
+3. Discord APIとの統合方法
+4. 認証・認可の仕組み
+5. コマンドの実装方法
+6. SDKの使い方（@anthropic-ai/claude-agent-sdk）
+
+## 出力形式
+調査結果を `investigation/` ディレクトリに以下のファイルで出力して：
+
+1. `agent-discord-skills-analysis.md` - agent-discord-skillsの詳細分析
+2. `claude-code-discord-analysis.md` - claude-code-discordの詳細分析
+3. `implementation-patterns.md` - 実装パターンのまとめ
+4. `api-endpoints.md` - 使用されているAPIエンドポイントのリスト
+5. `architecture-comparison.md` - 2つのアプローチの比較
+
+できるだけ詳しく、コード例を交えて説明して。

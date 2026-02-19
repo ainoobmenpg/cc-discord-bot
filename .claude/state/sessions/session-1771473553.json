@@ -1,0 +1,49 @@
+{
+  "session_id": "session-1771473553",
+  "parent_session_id": null,
+  "state": "stopped",
+  "started_at": "2026-02-19T03:59:13Z",
+  "updated_at": "2026-02-19T04:19:02Z",
+  "event_seq": 16,
+  "last_event_id": "event-000016",
+  "state_version": 1,
+  "cwd": "/tmp/cc-discord-bot-scan",
+  "project_name": "cc-discord-bot-scan",
+  "resumed_at": "2026-02-19T03:59:13Z",
+  "git": {
+    "branch": "main",
+    "uncommitted_changes": 2,
+    "last_commit": "65824d8"
+  },
+  "plans": {
+    "exists": false,
+    "last_modified": 0,
+    "wip_tasks": 0,
+    "todo_tasks": 0,
+    "pending_tasks": 0,
+    "completed_tasks": 0
+  },
+  "orchestration": {
+    "max_state_retries": 3,
+    "retry_backoff_seconds": 10
+  },
+  "prompt_seq": 1,
+  "intent": "semantic",
+  "changes_this_session": [
+    {
+      "file": "/tmp/cc-discord-bot-scan/investigation/claude-code-discord-analysis.md",
+      "action": "Write",
+      "timestamp": "2026-02-19T04:14:13Z",
+      "important": false
+    },
+    {
+      "file": "/tmp/cc-discord-bot-scan/investigation/architecture-comparison.md",
+      "action": "Write",
+      "timestamp": "2026-02-19T04:18:19Z",
+      "important": false
+    }
+  ],
+  "ended_at": "2026-02-19T04:19:02Z",
+  "duration_minutes": 559,
+  "memory_logged": true
+}
