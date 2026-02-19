@@ -1,8 +1,10 @@
 #!/bin/bash
 
-# .env ファイルから環境変数を読み込む
+# .env ファイルから環境変数を読み込む（安全な方法）
 if [ -f .env ]; then
-    export $(cat .env | grep -v '^#' | xargs)
+    set -a
+    source .env
+    set +a
 else
     echo "Error: .env file not found"
     echo "Please copy .env.example to .env and fill in your credentials"

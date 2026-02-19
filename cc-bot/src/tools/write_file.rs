@@ -1,0 +1,168 @@
+use crate::tool::{Tool, ToolContext, ToolError, ToolResult};
+use async_trait::async_trait;
+use serde_json::{json, Value as JsonValue};
+use std::path::Path;
+use tokio::fs;
+use tracing::{debug, warn};
+
+/// ファイル書き込みツール
+pub struct WriteFileTool;
+
+impl WriteFileTool {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// パスのバリデーション（相対パスのみ許可）
+    fn validate_path(path: &str) -> Result<(), ToolError> {
+        // 絶対パスは禁止
+        if path.starts_with('/') {
+            return Err(ToolError::PermissionDenied(
+                "Absolute paths are not allowed".to_string(),
+            ));
+        }
+
+        // 親ディレクトリ参照を禁止
+        if path.contains("..") {
+            return Err(ToolError::PermissionDenied(
+                "Parent directory references are not allowed".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// ユーザー固有のパスに変換
+    fn get_user_path(path: &str, context: &ToolContext) -> String {
+        let output_dir = context.get_user_output_dir();
+        format!("{}/{}", output_dir, path)
+    }
+}
+
+#[async_trait]
+impl Tool for WriteFileTool {
+    fn name(&self) -> &str {
+        "write_file"
+    }
+
+    fn description(&self) -> &str {
+        "Write content to a file in the user's output directory. The file will be saved to output/{date}/user_{user_id}/{path}."
+    }
+
+    fn parameters_schema(&self) -> JsonValue {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path to the file to write (will be saved in user's directory)"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content to write to the file"
+                }
+            },
+            "required": ["path", "content"]
+        })
+    }
+
+    async fn execute(&self, params: JsonValue, context: &ToolContext) -> Result<ToolResult, ToolError> {
+        let path = params["path"].as_str().ok_or_else(|| {
+            ToolError::InvalidParams("Missing 'path' parameter".to_string())
+        })?;
+
+        let content = params["content"].as_str().ok_or_else(|| {
+            ToolError::InvalidParams("Missing 'content' parameter".to_string())
+        })?;
+
+        // パスのバリデーション
+        Self::validate_path(path)?;
+
+        // ユーザー固有のパスに変換
+        let user_path = Self::get_user_path(path, context);
+        debug!("Writing to file: {} ({} bytes)", user_path, content.len());
+
+        // ユーザーディレクトリを作成
+        let output_dir = context.get_user_output_dir();
+        fs::create_dir_all(&output_dir).await.map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to create output directory: {}", e))
+        })?;
+
+        // 親ディレクトリを作成（必要な場合）
+        let path_obj = Path::new(&user_path);
+        if let Some(parent) = path_obj.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).await.map_err(|e| {
+                    ToolError::ExecutionFailed(format!("Failed to create directory: {}", e))
+                })?;
+                debug!("Created directory: {:?}", parent);
+            }
+        }
+
+        // ファイル書き込み
+        match fs::write(&user_path, content).await {
+            Ok(_) => {
+                debug!("Successfully wrote to {}", user_path);
+                Ok(ToolResult::success(format!(
+                    "Successfully wrote {} bytes to {}",
+                    content.len(),
+                    user_path
+                )))
+            }
+            Err(e) => {
+                warn!("Failed to write file {}: {}", user_path, e);
+                Err(ToolError::ExecutionFailed(format!(
+                    "Failed to write file: {}",
+                    e
+                )))
+            }
+        }
+    }
+}
+
+impl Default for WriteFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_context() -> ToolContext {
+        ToolContext::new(123, "test_user".to_string(), 456)
+    }
+
+    #[test]
+    fn test_validate_path_absolute() {
+        let result = WriteFileTool::validate_path("/etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_path_parent() {
+        let result = WriteFileTool::validate_path("../secret.txt");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_path_valid() {
+        let result = WriteFileTool::validate_path("data/file.txt");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_user_path() {
+        let ctx = create_test_context();
+        let user_path = WriteFileTool::get_user_path("test.txt", &ctx);
+        assert!(user_path.contains("test_user_123"));
+        assert!(user_path.ends_with("/test.txt"));
+    }
+
+    #[test]
+    fn test_tool_definition() {
+        let tool = WriteFileTool::new();
+        assert_eq!(tool.name(), "write_file");
+    }
+}
