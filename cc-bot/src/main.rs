@@ -180,29 +180,37 @@ impl EventHandler for Handler {
 impl Handler {
     /// Slash Commandを処理
     async fn handle_slash_command(&self, ctx: &Context, command: &CommandInteraction) {
-        let response = match command.data.name.as_str() {
-            "admin" => commands::admin::run(ctx, command, self).await,
-            "ask" => commands::ask::run(ctx, command, self).await,
-            "clear" => commands::clear::run(ctx, command, self).await,
-            "memory" => commands::memory_cmd::run(ctx, command, self).await,
-            "permission" => commands::permission::run(ctx, command, self).await,
-            "schedule" => commands::schedule::run(ctx, command, self).await,
-            "settings" => commands::settings::run(ctx, command, self).await,
-            "tools" => commands::tools::run(ctx, command, self).await,
-            _ => "不明なコマンドです。".to_string(),
-        };
+        match command.data.name.as_str() {
+            // askコマンドは独自に応答処理を行う（deferred responseパターン）
+            "ask" => {
+                commands::ask::run(ctx, command, self).await;
+            }
+            _ => {
+                // 他のコマンドは従来通り
+                let response = match command.data.name.as_str() {
+                    "admin" => commands::admin::run(ctx, command, self).await,
+                    "clear" => commands::clear::run(ctx, command, self).await,
+                    "memory" => commands::memory_cmd::run(ctx, command, self).await,
+                    "permission" => commands::permission::run(ctx, command, self).await,
+                    "schedule" => commands::schedule::run(ctx, command, self).await,
+                    "settings" => commands::settings::run(ctx, command, self).await,
+                    "tools" => commands::tools::run(ctx, command, self).await,
+                    _ => "不明なコマンドです。".to_string(),
+                };
 
-        // インタラクションに応答
-        if let Err(e) = command
-            .create_response(
-                &ctx.http,
-                serenity::builder::CreateInteractionResponse::Message(
-                    serenity::builder::CreateInteractionResponseMessage::new().content(&response),
-                ),
-            )
-            .await
-        {
-            error!("Failed to respond to slash command: {}", e);
+                // インタラクションに応答
+                if let Err(e) = command
+                    .create_response(
+                        &ctx.http,
+                        serenity::builder::CreateInteractionResponse::Message(
+                            serenity::builder::CreateInteractionResponseMessage::new().content(&response),
+                        ),
+                    )
+                    .await
+                {
+                    error!("Failed to respond to slash command: {}", e);
+                }
+            }
         }
     }
 
