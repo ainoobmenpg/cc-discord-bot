@@ -1,10 +1,71 @@
 use crate::tool::{Tool, ToolContext, ToolError, ToolResult};
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Client;
 use serde_json::{json, Value as JsonValue};
 use std::time::Duration;
 use tracing::{debug, warn};
+
+/// キャッシュされた正規表現パターン
+struct RegexPatterns {
+    script: Regex,
+    style: Regex,
+    h1: Regex,
+    h2: Regex,
+    h3: Regex,
+    h4: Regex,
+    h5: Regex,
+    h6: Regex,
+    p: Regex,
+    a: Regex,
+    strong: Regex,
+    b: Regex,
+    em: Regex,
+    i: Regex,
+    code: Regex,
+    pre: Regex,
+    li: Regex,
+    list: Regex,
+    br: Regex,
+    html_tag: Regex,
+    numeric_entity: Regex,
+    multi_newline: Regex,
+    multi_space: Regex,
+}
+
+impl RegexPatterns {
+    fn new() -> Self {
+        Self {
+            script: Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap(),
+            style: Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap(),
+            h1: Regex::new(r"(?i)<h1[^>]*>(.*?)</h1>").unwrap(),
+            h2: Regex::new(r"(?i)<h2[^>]*>(.*?)</h2>").unwrap(),
+            h3: Regex::new(r"(?i)<h3[^>]*>(.*?)</h3>").unwrap(),
+            h4: Regex::new(r"(?i)<h4[^>]*>(.*?)</h4>").unwrap(),
+            h5: Regex::new(r"(?i)<h5[^>]*>(.*?)</h5>").unwrap(),
+            h6: Regex::new(r"(?i)<h6[^>]*>(.*?)</h6>").unwrap(),
+            p: Regex::new(r"(?is)<p[^>]*>(.*?)</p>").unwrap(),
+            a: Regex::new(r#"(?i)<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>"#).unwrap(),
+            strong: Regex::new(r"(?i)<strong[^>]*>(.*?)</strong>").unwrap(),
+            b: Regex::new(r"(?i)<b[^>]*>(.*?)</b>").unwrap(),
+            em: Regex::new(r"(?i)<em[^>]*>(.*?)</em>").unwrap(),
+            i: Regex::new(r"(?i)<i[^>]*>(.*?)</i>").unwrap(),
+            code: Regex::new(r"(?i)<code[^>]*>(.*?)</code>").unwrap(),
+            pre: Regex::new(r"(?is)<pre[^>]*>(.*?)</pre>").unwrap(),
+            li: Regex::new(r"(?is)<li[^>]*>(.*?)</li>").unwrap(),
+            list: Regex::new(r"(?i)</?[ou]l[^>]*>").unwrap(),
+            br: Regex::new(r"(?i)<br\s*/?>").unwrap(),
+            html_tag: Regex::new(r"<[^>]+>").unwrap(),
+            numeric_entity: Regex::new(r"&#(\d+);").unwrap(),
+            multi_newline: Regex::new(r"\n{3,}").unwrap(),
+            multi_space: Regex::new(r" {2,}").unwrap(),
+        }
+    }
+}
+
+/// グローバルにキャッシュされた正規表現
+static REGEX: Lazy<RegexPatterns> = Lazy::new(RegexPatterns::new);
 
 /// Web取得ツール（HTTP取得 + Markdown変換）
 pub struct WebFetchTool {
@@ -52,103 +113,47 @@ impl WebFetchTool {
         Ok((body, content_type))
     }
 
-    /// HTMLをMarkdownに変換（シンプルな実装）
+    /// HTMLをMarkdownに変換（キャッシュされたRegexを使用）
     fn html_to_markdown(html: &str) -> String {
         let mut md = html.to_string();
 
         // スクリプトとスタイルを削除
-        let script_re = Regex::new(r"<script[^>]*>.*?</script>").unwrap();
-        let style_re = Regex::new(r"<style[^>]*>.*?</style>").unwrap();
-        md = script_re.replace_all(&md, "").to_string();
-        md = style_re.replace_all(&md, "").to_string();
+        md = REGEX.script.replace_all(&md, "").to_string();
+        md = REGEX.style.replace_all(&md, "").to_string();
 
         // ヘッダー
-        md = Regex::new(r"<h1[^>]*>(.*?)</h1>")
-            .unwrap()
-            .replace_all(&md, "# $1\n")
-            .to_string();
-        md = Regex::new(r"<h2[^>]*>(.*?)</h2>")
-            .unwrap()
-            .replace_all(&md, "## $1\n")
-            .to_string();
-        md = Regex::new(r"<h3[^>]*>(.*?)</h3>")
-            .unwrap()
-            .replace_all(&md, "### $1\n")
-            .to_string();
-        md = Regex::new(r"<h4[^>]*>(.*?)</h4>")
-            .unwrap()
-            .replace_all(&md, "#### $1\n")
-            .to_string();
-        md = Regex::new(r"<h5[^>]*>(.*?)</h5>")
-            .unwrap()
-            .replace_all(&md, "##### $1\n")
-            .to_string();
-        md = Regex::new(r"<h6[^>]*>(.*?)</h6>")
-            .unwrap()
-            .replace_all(&md, "###### $1\n")
-            .to_string();
+        md = REGEX.h1.replace_all(&md, "# $1\n").to_string();
+        md = REGEX.h2.replace_all(&md, "## $1\n").to_string();
+        md = REGEX.h3.replace_all(&md, "### $1\n").to_string();
+        md = REGEX.h4.replace_all(&md, "#### $1\n").to_string();
+        md = REGEX.h5.replace_all(&md, "##### $1\n").to_string();
+        md = REGEX.h6.replace_all(&md, "###### $1\n").to_string();
 
         // 段落
-        md = Regex::new(r"<p[^>]*>(.*?)</p>")
-            .unwrap()
-            .replace_all(&md, "$1\n\n")
-            .to_string();
+        md = REGEX.p.replace_all(&md, "$1\n\n").to_string();
 
         // リンク
-        md = Regex::new(r#"<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>"#)
-            .unwrap()
-            .replace_all(&md, "[$2]($1)")
-            .to_string();
+        md = REGEX.a.replace_all(&md, "[$2]($1)").to_string();
 
         // 太字・斜体
-        md = Regex::new(r"<strong[^>]*>(.*?)</strong>")
-            .unwrap()
-            .replace_all(&md, "**$1**")
-            .to_string();
-        md = Regex::new(r"<b[^>]*>(.*?)</b>")
-            .unwrap()
-            .replace_all(&md, "**$1**")
-            .to_string();
-        md = Regex::new(r"<em[^>]*>(.*?)</em>")
-            .unwrap()
-            .replace_all(&md, "*$1*")
-            .to_string();
-        md = Regex::new(r"<i[^>]*>(.*?)</i>")
-            .unwrap()
-            .replace_all(&md, "*$1*")
-            .to_string();
+        md = REGEX.strong.replace_all(&md, "**$1**").to_string();
+        md = REGEX.b.replace_all(&md, "**$1**").to_string();
+        md = REGEX.em.replace_all(&md, "*$1*").to_string();
+        md = REGEX.i.replace_all(&md, "*$1*").to_string();
 
         // コード
-        md = Regex::new(r"<code[^>]*>(.*?)</code>")
-            .unwrap()
-            .replace_all(&md, "`$1`")
-            .to_string();
-        md = Regex::new(r"<pre[^>]*>(.*?)</pre>")
-            .unwrap()
-            .replace_all(&md, "```\n$1\n```")
-            .to_string();
+        md = REGEX.code.replace_all(&md, "`$1`").to_string();
+        md = REGEX.pre.replace_all(&md, "```\n$1\n```").to_string();
 
         // リスト
-        md = Regex::new(r"<li[^>]*>(.*?)</li>")
-            .unwrap()
-            .replace_all(&md, "- $1\n")
-            .to_string();
-        md = Regex::new(r"</?[ou]l[^>]*>")
-            .unwrap()
-            .replace_all(&md, "\n")
-            .to_string();
+        md = REGEX.li.replace_all(&md, "- $1\n").to_string();
+        md = REGEX.list.replace_all(&md, "\n").to_string();
 
         // 改行
-        md = Regex::new(r"<br\s*/?>")
-            .unwrap()
-            .replace_all(&md, "\n")
-            .to_string();
+        md = REGEX.br.replace_all(&md, "\n").to_string();
 
         // 残りのHTMLタグを削除
-        md = Regex::new(r"<[^>]+>")
-            .unwrap()
-            .replace_all(&md, "")
-            .to_string();
+        md = REGEX.html_tag.replace_all(&md, "").to_string();
 
         // HTMLエンティティをデコード
         md = md.replace("&nbsp;", " ");
@@ -157,8 +162,7 @@ impl WebFetchTool {
         md = md.replace("&gt;", ">");
         md = md.replace("&quot;", "\"");
         md = md.replace("&#39;", "'");
-        md = Regex::new(r"&#(\d+);")
-            .unwrap()
+        md = REGEX.numeric_entity
             .replace_all(&md, |caps: &regex::Captures| {
                 caps[1]
                     .parse::<u32>()
@@ -170,14 +174,8 @@ impl WebFetchTool {
             .to_string();
 
         // 余分な空白を削除
-        md = Regex::new(r"\n{3,}")
-            .unwrap()
-            .replace_all(&md, "\n\n")
-            .to_string();
-        md = Regex::new(r" {2,}")
-            .unwrap()
-            .replace_all(&md, " ")
-            .to_string();
+        md = REGEX.multi_newline.replace_all(&md, "\n\n").to_string();
+        md = REGEX.multi_space.replace_all(&md, " ").to_string();
 
         // 前後の空白を削除
         md.trim().to_string()
@@ -359,5 +357,14 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(matches!(result, Err(ToolError::InvalidParams(_))));
+    }
+
+    #[test]
+    fn test_regex_patterns_case_insensitive() {
+        // 大文字小文字を区別しないことを確認
+        let html = "<H1>Title</H1><STRONG>bold</STRONG>";
+        let md = WebFetchTool::html_to_markdown(html);
+        assert!(md.contains("# Title"));
+        assert!(md.contains("**bold**"));
     }
 }
