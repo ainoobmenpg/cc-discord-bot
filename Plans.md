@@ -62,7 +62,7 @@ API_KEY=your-api-key
 
 ---
 
-## v1.0.0 - 権限システム再設計 🚧 [feature:security]
+## v1.0.0 - 権限システム再設計 ✅ [feature:security]
 
 ### 概要
 
@@ -92,21 +92,21 @@ SuperUser権限追加、ロール連携、コマンドベース権限管理を�
 
 ### タスク
 
-- [ ] `Permission::SuperUser` 追加
-- [ ] `SUPER_USER_IDS` 環境変数読み込み
-- [ ] SuperUser時の全制限バイパス実装
-- [ ] `src/role_config.rs` - ロール設定ファイル読み込み
-- [ ] `RoleConfig` struct実装（Serde deserialize）
-- [ ] `PermissionManager`にロールベース権限チェック追加
-- [ ] Discord Guild APIからユーザーロール取得
-- [ ] `/permission roles` - ロール-権限マッピング表示
-- [ ] `/permission sync` - ロールと権限を同期
-- [ ] `/permission grant @user <perm>` - 個別権限付与
-- [ ] `/permission revoke @user <perm>` - 個別権限剥奪
+- [x] `Permission::SuperUser` 追加
+- [x] `SUPER_USER_IDS` 環境変数読み込み
+- [x] SuperUser時の全制限バイパス実装
+- [x] `src/role_config.rs` - ロール設定ファイル読み込み
+- [x] `RoleConfig` struct実装（Serde deserialize）
+- [x] `PermissionManager`にロールベース権限チェック追加
+- [x] Discord Guild APIからユーザーロール取得
+- [x] `/permission roles` - ロール-権限マッピング表示
+- [x] `/permission sync` - ロールと権限を同期
+- [x] `/permission grant @user <perm>` - 個別権限付与
+- [x] `/permission revoke @user <perm>` - 個別権限剥奪
 
 ---
 
-## v1.1.0 - ユーザー毎設定管理 🚧
+## v1.1.0 - ユーザー毎設定管理 ✅
 
 ### 出力先パス
 
@@ -117,15 +117,15 @@ SuperUser権限追加、ロール連携、コマンドベース権限管理を�
 
 ### タスク
 
-- [ ] `src/user_settings.rs` - ユーザー設定ストア
-- [ ] `UserSettings` struct実装
-- [ ] `ToolContext`に出力先パス生成ロジック追加
-- [ ] `/settings output` - 出力先設定コマンド
-- [ ] `/settings show` - 現在の設定表示
+- [x] `src/user_settings.rs` - ユーザー設定ストア
+- [x] `UserSettings` struct実装
+- [x] `ToolContext`に出力先パス生成ロジック追加
+- [x] `/settings output` - 出力先設定コマンド
+- [x] `/settings show` - 現在の設定表示
 
 ---
 
-## v1.2.0 - 個人メモリ強化 🚧
+## v1.2.0 - 個人メモリ強化 ✅
 
 ### 拡張メモリスキーマ
 
@@ -137,12 +137,12 @@ ALTER TABLE memories ADD COLUMN metadata TEXT DEFAULT '{}';
 
 ### タスク
 
-- [ ] `Memory` structに`category`, `tags`, `metadata`追加
-- [ ] マイグレーションロジック（既存DB互換）
-- [ ] `/memory add --category` - カテゴリ付きメモリ追加
-- [ ] `/memory add --tag` - タグ付きメモリ追加
-- [ ] `/memory list --category` - カテゴリでフィルタ
-- [ ] `/memory search` - 全文検索（LIKE実装）
+- [x] `Memory` structに`category`, `tags`, `metadata`追加
+- [x] マイグレーションロジック（既存DB互換）
+- [x] `/memory add --category` - カテゴリ付きメモリ追加
+- [x] `/memory add --tag` - タグ付きメモリ追加
+- [x] `/memory list --category` - カテゴリでフィルタ
+- [x] `/memory search` - 全文検索（LIKE実装）
 
 ---
 
