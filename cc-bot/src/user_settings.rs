@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-
+use crate::datetime_utils::parse_rfc3339_or_now;
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -166,6 +165,13 @@ pub struct UserSettingsStore {
 }
 
 impl UserSettingsStore {
+    /// Mutexロックを取得するヘルパー
+    fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, UserSettingsError> {
+        self.conn.lock().map_err(|e| {
+            UserSettingsError::DatabaseError(format!("Failed to lock connection: {}", e))
+        })
+    }
+
     /// 新しいUserSettingsStoreを作成（インメモリ）
     pub fn new() -> Result<Self, UserSettingsError> {
         let conn = Connection::open_in_memory()
@@ -185,14 +191,24 @@ impl UserSettingsStore {
 
         // 親ディレクトリを作成
         if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| UserSettingsError::DatabaseError(format!("Failed to create directory: {}", e)))?;
-            }
+            std::fs::create_dir_all(parent)
+                .map_err(|e| UserSettingsError::DatabaseError(format!("Failed to create directory: {}", e)))?;
         }
 
+        let is_new = !path.exists();
         let conn = Connection::open(&path)
             .map_err(|e| UserSettingsError::DatabaseError(format!("Failed to open database: {}", e)))?;
+
+        // 新規作成時はパーミッションを設定（所有者のみ読み書き可能）
+        if is_new {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| UserSettingsError::DatabaseError(format!("Failed to set file permissions: {}", e)))?;
+                debug!("Set database file permissions to 0600");
+            }
+        }
 
         let store = Self {
             conn: Mutex::new(conn),
@@ -209,9 +225,7 @@ impl UserSettingsStore {
 
     /// データベースを初期化
     fn initialize(&self) -> Result<(), UserSettingsError> {
-        let conn = self.conn.lock().map_err(|e| {
-            UserSettingsError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS user_settings (
@@ -260,9 +274,7 @@ impl UserSettingsStore {
         let created_at = now.to_rfc3339();
         let updated_at = now.to_rfc3339();
 
-        let conn = self.conn.lock().map_err(|e| {
-            UserSettingsError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         // 既存設定の確認
         let exists: bool = conn
@@ -300,9 +312,7 @@ impl UserSettingsStore {
 
     /// 設定を取得
     pub fn get_setting(&self, user_id: u64, key: &str) -> Result<Option<UserSetting>, UserSettingsError> {
-        let conn = self.conn.lock().map_err(|e| {
-            UserSettingsError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         let result = conn
             .query_row(
@@ -313,12 +323,8 @@ impl UserSettingsStore {
                         user_id: row.get::<_, i64>(0)? as u64,
                         key: row.get(1)?,
                         value: row.get(2)?,
-                        created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
-                            .map(|dt| dt.with_timezone(&Utc))
-                            .unwrap_or_else(|_| Utc::now()),
-                        updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                            .map(|dt| dt.with_timezone(&Utc))
-                            .unwrap_or_else(|_| Utc::now()),
+                        created_at: parse_rfc3339_or_now(&row.get::<_, String>(3)?),
+                        updated_at: parse_rfc3339_or_now(&row.get::<_, String>(4)?),
                     })
                 },
             )
@@ -330,9 +336,7 @@ impl UserSettingsStore {
 
     /// ユーザーの全設定を取得
     pub fn get_all_settings(&self, user_id: u64) -> Result<Vec<UserSetting>, UserSettingsError> {
-        let conn = self.conn.lock().map_err(|e| {
-            UserSettingsError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         let mut stmt = conn
             .prepare(
@@ -346,12 +350,8 @@ impl UserSettingsStore {
                     user_id: row.get::<_, i64>(0)? as u64,
                     key: row.get(1)?,
                     value: row.get(2)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_rfc3339_or_now(&row.get::<_, String>(3)?),
+                    updated_at: parse_rfc3339_or_now(&row.get::<_, String>(4)?),
                 })
             })
             .map_err(|e| UserSettingsError::DatabaseError(format!("Failed to query settings: {}", e)))?
@@ -363,9 +363,7 @@ impl UserSettingsStore {
 
     /// 設定を削除
     pub fn delete_setting(&self, user_id: u64, key: &str) -> Result<bool, UserSettingsError> {
-        let conn = self.conn.lock().map_err(|e| {
-            UserSettingsError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         let affected = conn
             .execute(
@@ -379,9 +377,7 @@ impl UserSettingsStore {
 
     /// ユーザーの全設定を削除
     pub fn clear_settings(&self, user_id: u64) -> Result<usize, UserSettingsError> {
-        let conn = self.conn.lock().map_err(|e| {
-            UserSettingsError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         let affected = conn
             .execute("DELETE FROM user_settings WHERE user_id = ?1", params![user_id as i64])
@@ -392,9 +388,7 @@ impl UserSettingsStore {
 
     /// ユーザーの設定数を取得
     pub fn count_settings(&self, user_id: u64) -> Result<usize, UserSettingsError> {
-        let conn = self.conn.lock().map_err(|e| {
-            UserSettingsError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         let count: i64 = conn
             .query_row(
@@ -417,9 +411,7 @@ impl UserSettingsStore {
 
     /// 全ユーザーIDを取得（管理者用）
     pub fn list_all_users(&self) -> Result<Vec<u64>, UserSettingsError> {
-        let conn = self.conn.lock().map_err(|e| {
-            UserSettingsError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         let mut stmt = conn
             .prepare("SELECT DISTINCT user_id FROM user_settings ORDER BY user_id")
@@ -442,15 +434,52 @@ impl UserSettingsStore {
         Ok(UserSettings::from_settings(user_id, &settings))
     }
 
-    /// UserSettings構造体を保存
+    /// UserSettings構造体を保存（トランザクションで一括処理）
     pub fn save_user_settings(&self, user_settings: &UserSettings) -> Result<usize, UserSettingsError> {
         let settings = user_settings.to_settings();
+        if settings.is_empty() {
+            return Ok(0);
+        }
+
+        let mut conn = self.lock_conn()?;
+
+        // トランザクション開始
+        let tx = conn.transaction().map_err(|e| {
+            UserSettingsError::DatabaseError(format!("Failed to begin transaction: {}", e))
+        })?;
+
+        let now = Utc::now();
+        let created_at = now.to_rfc3339();
+        let updated_at = now.to_rfc3339();
         let mut count = 0;
 
-        for setting in settings {
-            self.set_setting(setting.user_id, &setting.key, &setting.value)?;
+        for setting in &settings {
+            // キー検証
+            if !Self::is_valid_key(&setting.key) {
+                return Err(UserSettingsError::InvalidKey(format!(
+                    "Invalid setting key: {}. Valid keys: {:?}",
+                    setting.key, setting_keys::VALID_KEYS
+                )));
+            }
+
+            // 値検証
+            let trimmed_value = setting.value.trim();
+            if trimmed_value.is_empty() {
+                return Err(UserSettingsError::InvalidValue("Value cannot be empty".to_string()));
+            }
+
+            // UPSERT（INSERT OR REPLACE）
+            tx.execute(
+                "INSERT OR REPLACE INTO user_settings (user_id, key, value, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![setting.user_id as i64, &setting.key, trimmed_value, &created_at, &updated_at],
+            ).map_err(|e| UserSettingsError::DatabaseError(format!("Failed to save setting: {}", e)))?;
             count += 1;
         }
+
+        // コミット
+        tx.commit().map_err(|e| {
+            UserSettingsError::DatabaseError(format!("Failed to commit transaction: {}", e))
+        })?;
 
         Ok(count)
     }

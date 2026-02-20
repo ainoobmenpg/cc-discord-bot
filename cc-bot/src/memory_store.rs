@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-
+use crate::datetime_utils::parse_rfc3339_or_now;
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -7,7 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 /// メモリID
 pub type MemoryId = i64;
@@ -60,10 +59,19 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
+    /// Mutexロックを取得するヘルパー
+    fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, MemoryError> {
+        self.conn.lock().map_err(|e| {
+            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
+        })
+    }
+
     /// 新しいMemoryStoreを作成
     pub fn new() -> Result<Self, MemoryError> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| MemoryError::DatabaseError(format!("Failed to create in-memory DB: {}", e)))?;
+        let conn = Connection::open_in_memory().map_err(|e| {
+            error!("Failed to create in-memory DB: {}", e);
+            MemoryError::DatabaseError("Failed to create database".to_string())
+        })?;
 
         let store = Self {
             conn: Mutex::new(conn),
@@ -77,16 +85,18 @@ impl MemoryStore {
         let path = Self::get_file_path(base_dir);
         debug!("Loading memory store from {:?}", path);
 
-        // 親ディレクトリを作成
+        // 親ディレクトリを作成（create_dir_allは内部で存在確認を行う）
         if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| MemoryError::DatabaseError(format!("Failed to create directory: {}", e)))?;
-            }
+            std::fs::create_dir_all(parent).map_err(|e| {
+                error!("Failed to create directory: {}", e);
+                MemoryError::DatabaseError("Failed to initialize storage".to_string())
+            })?;
         }
 
-        let conn = Connection::open(&path)
-            .map_err(|e| MemoryError::DatabaseError(format!("Failed to open database: {}", e)))?;
+        let conn = Connection::open(&path).map_err(|e| {
+            error!("Failed to open database at {:?}: {}", path, e);
+            MemoryError::DatabaseError("Failed to open database".to_string())
+        })?;
 
         let store = Self {
             conn: Mutex::new(conn),
@@ -103,9 +113,7 @@ impl MemoryStore {
 
     /// データベースを初期化
     fn initialize(&self) -> Result<(), MemoryError> {
-        let conn = self.conn.lock().map_err(|e| {
-            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS memories (
@@ -200,9 +208,7 @@ impl MemoryStore {
         let metadata = serde_json::to_string(&new_memory.metadata.clone().unwrap_or_default())
             .unwrap_or_else(|_| "{}".to_string());
 
-        let conn = self.conn.lock().map_err(|e| {
-            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         conn.execute(
             "INSERT INTO memories (user_id, content, category, tags, metadata, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -225,9 +231,22 @@ impl MemoryStore {
 
     /// ユーザーのメモリ一覧を取得（最新10件）
     pub fn list_memories(&self, user_id: u64, limit: usize) -> Result<Vec<Memory>, MemoryError> {
-        let conn = self.conn.lock().map_err(|e| {
-            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        self.list_memories_with_offset(user_id, limit, 0)
+    }
+
+    /// ユーザーのメモリ一覧を取得（ページネーション対応）
+    ///
+    /// # Arguments
+    /// * `user_id` - ユーザーID
+    /// * `limit` - 取得する最大件数
+    /// * `offset` - スキップする件数（ページネーション用）
+    pub fn list_memories_with_offset(
+        &self,
+        user_id: u64,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>, MemoryError> {
+        let conn = self.lock_conn()?;
 
         let mut stmt = conn
             .prepare(
@@ -235,12 +254,12 @@ impl MemoryStore {
                  FROM memories
                  WHERE user_id = ?1
                  ORDER BY created_at DESC
-                 LIMIT ?2",
+                 LIMIT ?2 OFFSET ?3",
             )
             .map_err(|e| MemoryError::DatabaseError(format!("Failed to prepare statement: {}", e)))?;
 
         let memories = stmt
-            .query_map(params![user_id as i64, limit as i64], |row| {
+            .query_map(params![user_id as i64, limit as i64, offset as i64], |row| {
                 Ok(Memory {
                     id: row.get(0)?,
                     user_id: row.get::<_, i64>(1)? as u64,
@@ -248,12 +267,8 @@ impl MemoryStore {
                     category: row.get(3)?,
                     tags: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
                     metadata: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_rfc3339_or_now(&row.get::<_, String>(6)?),
+                    updated_at: parse_rfc3339_or_now(&row.get::<_, String>(7)?),
                 })
             })
             .map_err(|e| MemoryError::DatabaseError(format!("Failed to query memories: {}", e)))?
@@ -270,9 +285,7 @@ impl MemoryStore {
         category: &str,
         limit: usize,
     ) -> Result<Vec<Memory>, MemoryError> {
-        let conn = self.conn.lock().map_err(|e| {
-            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         let mut stmt = conn
             .prepare(
@@ -293,12 +306,8 @@ impl MemoryStore {
                     category: row.get(3)?,
                     tags: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
                     metadata: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_rfc3339_or_now(&row.get::<_, String>(6)?),
+                    updated_at: parse_rfc3339_or_now(&row.get::<_, String>(7)?),
                 })
             })
             .map_err(|e| MemoryError::DatabaseError(format!("Failed to query memories: {}", e)))?
@@ -308,23 +317,31 @@ impl MemoryStore {
         Ok(memories)
     }
 
-    /// メモリを検索
+    /// LIKEパターンの特殊文字をエスケープ
+    fn escape_like_pattern(pattern: &str) -> String {
+        pattern
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    }
+
+    /// メモリを検索（前方一致検索でインデックスを活用）
     pub fn search_memories(&self, user_id: u64, query: &str) -> Result<Vec<Memory>, MemoryError> {
         if query.trim().is_empty() {
             return self.list_memories(user_id, 10);
         }
 
-        let conn = self.conn.lock().map_err(|e| {
-            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
-        let search_pattern = format!("%{}%", query.trim());
+        let escaped_query = Self::escape_like_pattern(query.trim());
+        // 前方一致検索を使用（インデックスが有効）
+        let search_pattern = format!("{}%", escaped_query);
 
         let mut stmt = conn
             .prepare(
                 "SELECT id, user_id, content, category, tags, metadata, created_at, updated_at
                  FROM memories
-                 WHERE user_id = ?1 AND content LIKE ?2
+                 WHERE user_id = ?1 AND content LIKE ?2 ESCAPE '\\'
                  ORDER BY created_at DESC
                  LIMIT 10",
             )
@@ -339,12 +356,8 @@ impl MemoryStore {
                     category: row.get(3)?,
                     tags: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
                     metadata: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    created_at: parse_rfc3339_or_now(&row.get::<_, String>(6)?),
+                    updated_at: parse_rfc3339_or_now(&row.get::<_, String>(7)?),
                 })
             })
             .map_err(|e| MemoryError::DatabaseError(format!("Failed to query memories: {}", e)))?
@@ -356,9 +369,7 @@ impl MemoryStore {
 
     /// メモリを削除（ユーザー確認付き）
     pub fn delete_memory(&self, user_id: u64, id: MemoryId) -> Result<Memory, MemoryError> {
-        let conn = self.conn.lock().map_err(|e| {
-            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         // まず対象を取得してユーザー確認
         let memory: Option<Memory> = conn
@@ -404,9 +415,7 @@ impl MemoryStore {
     /// ユーザーの全メモリを削除
     #[allow(dead_code)]
     pub fn clear_memories(&self, user_id: u64) -> Result<usize, MemoryError> {
-        let conn = self.conn.lock().map_err(|e| {
-            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         let affected = conn
             .execute("DELETE FROM memories WHERE user_id = ?1", params![user_id as i64])
@@ -418,9 +427,7 @@ impl MemoryStore {
     /// ユーザーのメモリ数を取得
     #[allow(dead_code)]
     pub fn count_memories(&self, user_id: u64) -> Result<usize, MemoryError> {
-        let conn = self.conn.lock().map_err(|e| {
-            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
-        })?;
+        let conn = self.lock_conn()?;
 
         let count: i64 = conn
             .query_row(
@@ -483,9 +490,14 @@ mod tests {
             })
             .unwrap();
 
+        // 前方一致検索のテスト（"Hello"で始まるコンテンツを検索）
+        let results = store.search_memories(12345, "Hello").unwrap();
+        assert_eq!(results.len(), 1, "Should find memory starting with 'Hello'");
+        assert!(results[0].content.contains("Hello"));
+
+        // "world"で始まらないので見つからない
         let results = store.search_memories(12345, "world").unwrap();
-        assert_eq!(results.len(), 1);
-        assert!(results[0].content.contains("world"));
+        assert_eq!(results.len(), 0, "Should not find memory not starting with 'world'");
     }
 
     #[test]
@@ -554,6 +566,51 @@ mod tests {
     }
 
     #[test]
+    fn test_search_memory_with_special_chars() {
+        let store = MemoryStore::new().unwrap();
+
+        // 特殊文字を含むメモリを追加
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "100% complete".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "test_value".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "path\\to\\file".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // %を含む検索 - エスケープされているので100%にマッチ
+        let results = store.search_memories(12345, "100%").unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("100%"));
+
+        // _を含む検索 - エスケープされているのでtest_valueにマッチ
+        let results = store.search_memories(12345, "test_value").unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("test_value"));
+
+        // バックスラッシュを含む検索
+        let results = store.search_memories(12345, "path\\to").unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("path\\to"));
+    }
+
+    #[test]
     fn test_memory_with_category_and_tags() {
         let store = MemoryStore::new().unwrap();
 
@@ -605,10 +662,107 @@ mod tests {
 
         // マイグレーション後、データが正しく読み込めることを確認
         let memories = store.list_memories(12345, 10).unwrap();
-        assert_eq!(memories.len(), 1);
-        assert_eq!(memories[0].content, "Old memory");
-        assert_eq!(memories[0].category, "general"); // デフォルト値
-        assert!(memories[0].tags.is_empty()); // デフォルト値
-        assert!(memories[0].metadata.is_empty()); // デフォルト値
+        assert_eq!(memories.len(), 1, "Should have 1 memory after migration");
+        assert_eq!(memories[0].content, "Old memory", "Content should be preserved");
+        assert_eq!(memories[0].category, "general", "Category should default to 'general'"); // デフォルト値
+        assert!(memories[0].tags.is_empty(), "Tags should default to empty"); // デフォルト値
+        assert!(memories[0].metadata.is_empty(), "Metadata should default to empty"); // デフォルト値
+    }
+
+    #[test]
+    fn test_list_memories_by_category() {
+        let store = MemoryStore::new().unwrap();
+
+        // 異なるカテゴリのメモリを追加
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "Work memory 1".to_string(),
+                category: Some("work".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "Work memory 2".to_string(),
+                category: Some("work".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "Personal memory".to_string(),
+                category: Some("personal".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "Default category memory".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // workカテゴリでフィルタリング
+        let work_memories = store.list_memories_by_category(12345, "work", 10).unwrap();
+        assert_eq!(work_memories.len(), 2, "Should have 2 work memories");
+        assert!(work_memories.iter().all(|m| m.category == "work"), "All memories should be in 'work' category");
+
+        // personalカテゴリでフィルタリング
+        let personal_memories = store.list_memories_by_category(12345, "personal", 10).unwrap();
+        assert_eq!(personal_memories.len(), 1, "Should have 1 personal memory");
+        assert_eq!(personal_memories[0].content, "Personal memory", "Content should match");
+
+        // generalカテゴリ（デフォルト）でフィルタリング
+        let general_memories = store.list_memories_by_category(12345, "general", 10).unwrap();
+        assert_eq!(general_memories.len(), 1, "Should have 1 general memory");
+        assert_eq!(general_memories[0].content, "Default category memory", "Content should match");
+
+        // 存在しないカテゴリは空
+        let unknown_memories = store.list_memories_by_category(12345, "unknown", 10).unwrap();
+        assert!(unknown_memories.is_empty(), "Unknown category should return empty");
+
+        // 別のユーザーのメモリは取得できない
+        let other_user_memories = store.list_memories_by_category(99999, "work", 10).unwrap();
+        assert!(other_user_memories.is_empty(), "Other user's memories should not be returned");
+    }
+
+    #[test]
+    fn test_list_memories_with_offset() {
+        let store = MemoryStore::new().unwrap();
+
+        // 5件のメモリを追加
+        for i in 1..=5 {
+            store
+                .add_memory(NewMemory {
+                    user_id: 12345,
+                    content: format!("Memory {}", i),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        // ページネーションテスト
+        // 1ページ目: 最新3件
+        let page1 = store.list_memories_with_offset(12345, 3, 0).unwrap();
+        assert_eq!(page1.len(), 3, "First page should have 3 memories");
+        assert_eq!(page1[0].content, "Memory 5", "First item should be most recent");
+        assert_eq!(page1[2].content, "Memory 3", "Last item of page 1");
+
+        // 2ページ目: 残り2件
+        let page2 = store.list_memories_with_offset(12345, 3, 3).unwrap();
+        assert_eq!(page2.len(), 2, "Second page should have 2 memories");
+        assert_eq!(page2[0].content, "Memory 2", "First item of page 2");
+        assert_eq!(page2[1].content, "Memory 1", "Last item");
+
+        // オフセットが総数を超える場合は空
+        let page3 = store.list_memories_with_offset(12345, 3, 6).unwrap();
+        assert!(page3.is_empty(), "Offset beyond total should return empty");
     }
 }

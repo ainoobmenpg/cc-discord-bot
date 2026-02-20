@@ -21,6 +21,9 @@ pub enum RoleConfigError {
     ParseError(String),
 }
 
+/// サンプル用のモデレーターロールID（実際の運用では環境に合わせて変更）
+const SAMPLE_MODERATOR_ROLE_ID: u64 = 100000000000000000;
+
 /// 単一ロールの権限設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoleEntry {
@@ -48,7 +51,7 @@ impl Default for RoleConfigStore {
 
         // デフォルトのロール設定
         roles.insert(
-            100000000000000000, // サンプルロールID
+            SAMPLE_MODERATOR_ROLE_ID,
             RoleEntry {
                 name: "Moderator".to_string(),
                 permissions: vec!["FileRead".to_string(), "FileWrite".to_string(), "Schedule".to_string()],
@@ -100,8 +103,9 @@ impl RoleConfig {
             .map_err(|e| RoleConfigError::IoError(format!("Failed to read file: {}", e)))?;
 
         let store: RoleConfigStore = serde_json::from_str(&content).map_err(|e| {
-            warn!("Failed to parse role config file, using defaults: {}", e);
-            RoleConfigError::ParseError(format!("Failed to parse JSON: {}", e))
+            // パース失敗は設定ミスの可能性が高いためwarn
+            warn!("Failed to parse role config file at {:?}: {}", path, e);
+            RoleConfigError::ParseError("Invalid configuration format".to_string())
         })?;
 
         info!(
@@ -131,9 +135,25 @@ impl RoleConfig {
         let content = serde_json::to_string_pretty(&self.store)
             .map_err(|e| RoleConfigError::ParseError(format!("Failed to serialize: {}", e)))?;
 
-        fs::write(&path, content)
-            .await
-            .map_err(|e| RoleConfigError::IoError(format!("Failed to write file: {}", e)))?;
+        // パーミッションを指定してファイルを作成
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&path)
+                .and_then(|mut file| std::io::Write::write_all(&mut file, content.as_bytes()))
+                .map_err(|e| RoleConfigError::IoError(format!("Failed to write file: {}", e)))?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(&path, content)
+                .await
+                .map_err(|e| RoleConfigError::IoError(format!("Failed to write file: {}", e)))?;
+        }
 
         info!("Saved role config with {} roles", self.store.roles.len());
         Ok(())
@@ -391,5 +411,131 @@ mod tests {
         let perms_no_role = config.get_user_permissions(&[]);
         assert!(perms_no_role.contains(&Permission::FileRead)); // デフォルトのみ
         assert!(!perms_no_role.contains(&Permission::Admin));
+    }
+
+    #[tokio::test]
+    async fn test_load_invalid_json() {
+        let dir = tempdir().unwrap();
+        let base_dir = dir.path().to_str().unwrap();
+        let path = dir.path().join("roles.json");
+
+        // 不正なJSONファイルを作成
+        fs::write(&path, "{ invalid json }")
+            .await
+            .unwrap();
+
+        // 不正なJSONの読み込みはエラーになる
+        let result = RoleConfig::load(base_dir).await;
+        assert!(result.is_err());
+
+        // エラーの種類を確認
+        match result {
+            Err(RoleConfigError::ParseError(msg)) => {
+                assert!(msg.contains("Invalid configuration format"), "Error message should indicate invalid format");
+            }
+            _ => panic!("Expected ParseError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_load_truncated_json() {
+        let dir = tempdir().unwrap();
+        let base_dir = dir.path().to_str().unwrap();
+        let path = dir.path().join("roles.json");
+
+        // 切り詰められたJSONファイルを作成
+        fs::write(&path, r#"{"roles": {"123": {"name""#)
+            .await
+            .unwrap();
+
+        let result = RoleConfig::load(base_dir).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_empty_json_object() {
+        let dir = tempdir().unwrap();
+        let base_dir = dir.path().to_str().unwrap();
+        let path = dir.path().join("roles.json");
+
+        // 空のJSONオブジェクトを作成（必須フィールド欠落）
+        fs::write(&path, "{}")
+            .await
+            .unwrap();
+
+        let result = RoleConfig::load(base_dir).await;
+        // 空のオブジェクトはエラーになる（必須フィールドがないため）
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_json_with_wrong_types() {
+        let dir = tempdir().unwrap();
+        let base_dir = dir.path().to_str().unwrap();
+        let path = dir.path().join("roles.json");
+
+        // 型が間違っているJSONファイルを作成
+        let wrong_type_json = r#"{
+            "roles": "should_be_object_not_string",
+            "version": 1
+        }"#;
+        fs::write(&path, wrong_type_json)
+            .await
+            .unwrap();
+
+        let result = RoleConfig::load(base_dir).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_json_with_invalid_permission() {
+        let dir = tempdir().unwrap();
+        let base_dir = dir.path().to_str().unwrap();
+        let path = dir.path().join("roles.json");
+
+        // 不正な権限名を含むJSONファイルを作成
+        let invalid_perm_json = r#"{
+            "roles": {
+                "12345": {
+                    "name": "TestRole",
+                    "permissions": ["ValidPermission", 12345]
+                }
+            },
+            "version": 1
+        }"#;
+        fs::write(&path, invalid_perm_json)
+            .await
+            .unwrap();
+
+        let result = RoleConfig::load(base_dir).await;
+        // 権限が文字列配列でないためエラーになる
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_valid_json() {
+        let dir = tempdir().unwrap();
+        let base_dir = dir.path().to_str().unwrap();
+        let path = dir.path().join("roles.json");
+
+        // 正常なJSONファイルを作成
+        let valid_json = r#"{
+            "roles": {
+                "12345": {
+                    "name": "TestRole",
+                    "permissions": ["FileRead", "FileWrite"]
+                }
+            },
+            "default_permissions": ["FileRead"],
+            "version": 1
+        }"#;
+        fs::write(&path, valid_json)
+            .await
+            .unwrap();
+
+        let config = RoleConfig::load(base_dir).await.unwrap();
+        let perms = config.get_permissions_for_role(12345);
+        assert!(perms.contains(&Permission::FileRead));
+        assert!(perms.contains(&Permission::FileWrite));
     }
 }

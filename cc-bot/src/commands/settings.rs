@@ -75,9 +75,23 @@ async fn handle_output(
         return "パスを空にすることはできません。".to_string();
     }
 
-    // 危険なパスをチェック
+    // 危険なパスをチェック（パストラバーサル対策）
+    // - 相対パストラバーサル（..）
+    // - Unix絶対パス（/, ~）
+    // - Windows絶対パスやバックスラッシュ（\）
+    // - Nullバイト（\0）
+    // - パス長の上限（4096文字）
+    if path.is_empty() || path.len() > 4096 {
+        return "パスは1文字以上4096文字以内で指定してください。".to_string();
+    }
     if path.contains("..") || path.starts_with('/') || path.starts_with('~') {
         return "無効なパスです。相対パス（..）や絶対パス（/, ~）は使用できません。".to_string();
+    }
+    if path.contains('\\') {
+        return "無効なパスです。バックスラッシュは使用できません。".to_string();
+    }
+    if path.contains('\0') {
+        return "無効なパスです。Nullバイトを含むパスは使用できません。".to_string();
     }
 
     // 設定を保存

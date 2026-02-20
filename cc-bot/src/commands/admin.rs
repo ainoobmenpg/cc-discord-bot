@@ -7,11 +7,6 @@ use serenity::model::application::{CommandInteraction, CommandOptionType};
 use serenity::prelude::*;
 use tracing::error;
 
-/// 管理者かどうかを判定（main.rsから参照）
-fn is_admin(user_id: u64) -> bool {
-    crate::is_admin(user_id)
-}
-
 /// /admin コマンドの定義
 pub fn register() -> CreateCommand {
     CreateCommand::new("admin")
@@ -30,9 +25,14 @@ pub async fn run(
     command: &CommandInteraction,
     handler: &Handler,
 ) -> String {
-    // 管理者チェック
+    // 管理者チェック（PermissionManagerを使用）
     let user_id = command.user.id.get();
-    if !is_admin(user_id) {
+    let is_admin = {
+        let manager = handler.permission_manager.read().await;
+        manager.is_admin(user_id) || manager.is_super_user(user_id)
+    };
+
+    if !is_admin {
         return "このコマンドは管理者のみ実行できます。".to_string();
     }
 

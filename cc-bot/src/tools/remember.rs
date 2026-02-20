@@ -308,28 +308,29 @@ mod tests {
         // Save some memories
         store.add_memory(NewMemory {
             user_id: 12345,
-            content: "[shopping] buy milk".to_string(),
+            content: "shopping list: buy milk".to_string(),
             ..Default::default()
         }).unwrap();
         store.add_memory(NewMemory {
             user_id: 12345,
-            content: "[work] meeting notes".to_string(),
+            content: "work: meeting notes".to_string(),
             ..Default::default()
         }).unwrap();
         store.add_memory(NewMemory {
             user_id: 12345,
-            content: "[personal] gym at 5pm".to_string(),
+            content: "personal: gym at 5pm".to_string(),
             ..Default::default()
         }).unwrap();
 
         let tool = RecallTool::new(store);
         let ctx = create_test_context();
 
-        let result = tool.execute(json!({"query": "shop"}), &ctx).await.unwrap();
+        // 前方一致検索: "shopping"で始まるコンテンツを検索
+        let result = tool.execute(json!({"query": "shopping"}), &ctx).await.unwrap();
 
-        assert!(!result.is_error);
-        assert!(result.output.contains("shopping"));
-        assert!(result.output.contains("buy milk"));
+        assert!(!result.is_error, "Result should not be an error");
+        assert!(result.output.contains("shopping"), "Output should contain 'shopping'");
+        assert!(result.output.contains("buy milk"), "Output should contain 'buy milk'");
     }
 
     #[tokio::test]
@@ -387,26 +388,27 @@ mod tests {
     async fn test_recall_is_user_isolated() {
         let store = create_test_store();
 
-        // Save memory for one user
+        // Save memory for one user (前方一致検索用にコンテンツの先頭にキーワードを配置)
         store.add_memory(NewMemory {
             user_id: 12345,
-            content: "[my_secret] secret data".to_string(),
+            content: "secret: my secret data".to_string(),
             ..Default::default()
         }).unwrap();
         store.add_memory(NewMemory {
             user_id: 99999,
-            content: "[other_secret] other data".to_string(),
+            content: "secret: other secret data".to_string(),
             ..Default::default()
         }).unwrap();
 
         let tool = RecallTool::new(store);
         let ctx = create_test_context(); // user_id: 12345
 
+        // 前方一致検索: "secret"で始まるコンテンツを検索
         let result = tool.execute(json!({"query": "secret"}), &ctx).await.unwrap();
 
         // Should only return memories for user 12345
-        assert!(result.output.contains("my_secret"));
-        assert!(!result.output.contains("other_secret"));
+        assert!(result.output.contains("my secret data"), "Should contain user 12345's secret data");
+        assert!(!result.output.contains("other secret data"), "Should not contain user 99999's secret data");
     }
 
     #[test]

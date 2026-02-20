@@ -1,10 +1,12 @@
 mod api;
 mod commands;
+mod datetime_utils;
 mod glm;
 mod history;
 mod memory;
 mod memory_store;
 mod permission;
+mod persistent_store;
 mod rate_limiter;
 mod role_config;
 mod scheduler;
@@ -31,53 +33,6 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
-/// 管理者ユーザーIDのキャッシュ
-static ADMIN_USER_IDS: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
-
-/// スーパーユーザーIDのキャッシュ
-static SUPER_USER_IDS: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
-
-/// スーパーユーザーかどうかを判定
-fn is_super_user(user_id: u64) -> bool {
-    let super_user_ids = SUPER_USER_IDS.get_or_init(|| {
-        match env::var("SUPER_USER_IDS") {
-            Ok(ids) => ids
-                .split(',')
-                .filter_map(|s| s.trim().parse::<u64>().ok())
-                .collect(),
-            Err(_) => {
-                debug!("SUPER_USER_IDS environment variable not set");
-                Vec::new()
-            }
-        }
-    });
-
-    !super_user_ids.is_empty() && super_user_ids.contains(&user_id)
-}
-
-/// 管理者かどうかを判定（スーパーユーザーも管理者として扱う）
-fn is_admin(user_id: u64) -> bool {
-    // スーパーユーザーは常に管理者として扱う
-    if is_super_user(user_id) {
-        return true;
-    }
-
-    let admin_ids = ADMIN_USER_IDS.get_or_init(|| {
-        match env::var("ADMIN_USER_IDS") {
-            Ok(ids) => ids
-                .split(',')
-                .filter_map(|s| s.trim().parse::<u64>().ok())
-                .collect(),
-            Err(_) => {
-                warn!("ADMIN_USER_IDS environment variable not set");
-                Vec::new()
-            }
-        }
-    });
-
-    !admin_ids.is_empty() && admin_ids.contains(&user_id)
-}
-
 pub struct Handler {
     glm_client: glm::GLMClient,
     session_manager: Arc<Mutex<SessionManager>>,
@@ -98,6 +53,8 @@ pub struct Handler {
     pub base_output_dir: String,
     /// ロール設定
     pub role_config: Arc<RwLock<role_config::RoleConfig>>,
+    /// ユーザーロールキャッシュ
+    pub user_role_cache: user_roles::UserRoleCache,
 }
 
 #[serenity::async_trait]
@@ -179,7 +136,7 @@ async fn main() {
 
     // ツール出力ディレクトリを環境変数から取得（デフォルト: /tmp/cc-bot）
     let base_output_dir = env::var("BASE_OUTPUT_DIR").unwrap_or_else(|_| "/tmp/cc-bot".to_string());
-    info!("Base output directory: {}", base_output_dir);
+    debug!("Base output directory: {}", base_output_dir);
 
     // GLMクライアントを作成
     let glm_client = match glm::GLMClient::new() {
@@ -364,6 +321,19 @@ async fn main() {
         })
     );
 
+    // ユーザーロールキャッシュを作成
+    let user_role_cache = user_roles::UserRoleCache::new();
+
+    // 定期的にユーザーロールキャッシュをクリーンアップ
+    let role_cache_cleanup = user_role_cache.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5分ごと
+        loop {
+            interval.tick().await;
+            role_cache_cleanup.cleanup_expired().await;
+        }
+    });
+
     let handler = Handler {
         glm_client: glm_client.clone(),
         session_manager: session_manager.clone(),
@@ -377,6 +347,7 @@ async fn main() {
         processed_messages: Arc::new(Mutex::new(HashSet::new())),
         base_output_dir: base_output_dir.clone(),
         role_config,
+        user_role_cache,
     };
 
     // APIサーバーを並行起動

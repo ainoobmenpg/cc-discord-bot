@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -9,7 +7,7 @@ use tokio::fs;
 use tracing::{debug, info, warn};
 
 /// パーミッション定義
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Permission {
     /// ファイル読み取り権限
     FileRead,
@@ -136,7 +134,7 @@ impl PermissionManager {
                         .insert(Permission::Admin);
                     info!("Loaded admin user: {}", id);
                 } else {
-                    warn!("Invalid admin user ID: {}", id_str);
+                    panic!("Invalid admin user ID in ADMIN_USER_IDS: {}", id_str);
                 }
             }
         }
@@ -161,7 +159,7 @@ impl PermissionManager {
                         .insert(Permission::SuperUser);
                     info!("Loaded super user: {}", id);
                 } else {
-                    warn!("Invalid super user ID: {}", id_str);
+                    panic!("Invalid super user ID in SUPER_USER_IDS: {}", id_str);
                 }
             }
         }
@@ -250,7 +248,7 @@ impl PermissionManager {
         // カスタムパーミッションを追加
         if let Some(custom) = self.store.custom_permissions.get(&user_id) {
             for perm in custom {
-                perms.insert(perm.clone());
+                perms.insert(*perm);
             }
         }
 
@@ -293,7 +291,7 @@ impl PermissionManager {
         // 3. 個別ユーザー権限をマージ（最優先）
         if let Some(custom) = self.store.custom_permissions.get(&user_id) {
             for perm in custom {
-                perms.insert(perm.clone());
+                perms.insert(*perm);
             }
         }
 
@@ -360,7 +358,7 @@ impl PermissionManager {
             .entry(target_user_id)
             .or_insert_with(HashSet::new);
 
-        let added = perms.insert(permission.clone());
+        let added = perms.insert(permission);
         if added {
             info!(
                 "Granted {} to user {} by admin/superuser {}",
@@ -528,5 +526,264 @@ mod tests {
         let loaded = PermissionManager::load(base_dir).await.unwrap();
         assert!(loaded.is_admin(1));
         assert!(loaded.has_permission(2, &Permission::Schedule));
+    }
+
+    // ===== SuperUser関連テスト =====
+
+    #[test]
+    fn test_is_super_user() {
+        let mut manager = PermissionManager::new();
+        // スーパーユーザーを追加
+        manager.store.super_users.insert(999);
+        manager
+            .store
+            .custom_permissions
+            .entry(999)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::SuperUser);
+
+        assert!(manager.is_super_user(999), "SuperUser should be recognized");
+        assert!(!manager.is_super_user(1), "Non-super user should not be recognized");
+    }
+
+    #[test]
+    fn test_load_super_users_from_env() {
+        let mut manager = PermissionManager::new();
+        // 環境変数を設定
+        std::env::set_var("SUPER_USER_IDS", "111,222,333");
+        manager.load_super_users_from_env();
+
+        assert!(manager.is_super_user(111), "User 111 should be super user");
+        assert!(manager.is_super_user(222), "User 222 should be super user");
+        assert!(manager.is_super_user(333), "User 333 should be super user");
+        assert!(!manager.is_super_user(444), "User 444 should not be super user");
+
+        // クリーンアップ
+        std::env::remove_var("SUPER_USER_IDS");
+    }
+
+    #[test]
+    fn test_super_user_has_all_permissions() {
+        let mut manager = PermissionManager::new();
+        manager.store.super_users.insert(999);
+        manager
+            .store
+            .custom_permissions
+            .entry(999)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::SuperUser);
+
+        // SuperUserは全ての権限を持つ
+        assert!(manager.has_permission(999, &Permission::FileRead), "SuperUser should have FileRead");
+        assert!(manager.has_permission(999, &Permission::FileWrite), "SuperUser should have FileWrite");
+        assert!(manager.has_permission(999, &Permission::Schedule), "SuperUser should have Schedule");
+        assert!(manager.has_permission(999, &Permission::Admin), "SuperUser should have Admin");
+        assert!(manager.has_permission(999, &Permission::SuperUser), "SuperUser should have SuperUser");
+    }
+
+    #[test]
+    fn test_get_permissions_with_roles_for_super_user() {
+        let mut manager = PermissionManager::new();
+        manager.store.super_users.insert(999);
+        manager
+            .store
+            .custom_permissions
+            .entry(999)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::SuperUser);
+
+        let role_config = crate::role_config::RoleConfig::new();
+        let perms = manager.get_permissions_with_roles(999, &[100, 200], &role_config);
+
+        // SuperUserは全ての権限を持つ
+        assert!(perms.contains(&Permission::FileRead), "SuperUser permissions should include FileRead");
+        assert!(perms.contains(&Permission::FileWrite), "SuperUser permissions should include FileWrite");
+        assert!(perms.contains(&Permission::Schedule), "SuperUser permissions should include Schedule");
+        assert!(perms.contains(&Permission::Admin), "SuperUser permissions should include Admin");
+        assert!(perms.contains(&Permission::SuperUser), "SuperUser permissions should include SuperUser");
+    }
+
+    #[test]
+    fn test_has_permission_with_roles_for_super_user() {
+        let mut manager = PermissionManager::new();
+        manager.store.super_users.insert(999);
+        manager
+            .store
+            .custom_permissions
+            .entry(999)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::SuperUser);
+
+        let role_config = crate::role_config::RoleConfig::new();
+
+        // SuperUserはロールに関わらず全ての権限を持つ
+        assert!(
+            manager.has_permission_with_roles(999, &Permission::Admin, &[], &role_config),
+            "SuperUser should have Admin permission regardless of roles"
+        );
+        assert!(
+            manager.has_permission_with_roles(999, &Permission::SuperUser, &[], &role_config),
+            "SuperUser should have SuperUser permission"
+        );
+    }
+
+    #[test]
+    fn test_super_user_can_grant_admin_permission() {
+        let mut manager = PermissionManager::new();
+        // スーパーユーザーを設定
+        manager.store.super_users.insert(999);
+        manager
+            .store
+            .custom_permissions
+            .entry(999)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::SuperUser);
+
+        // スーパーユーザーはAdmin権限を付与できる
+        let result = manager.grant_permission(999, 100, Permission::Admin);
+        assert!(result.is_ok(), "SuperUser should be able to grant Admin permission");
+        assert!(manager.has_permission(100, &Permission::Admin), "Target user should have Admin permission");
+    }
+
+    #[test]
+    fn test_super_user_can_revoke_admin_permission() {
+        let mut manager = PermissionManager::new();
+        // ターゲットユーザーにAdmin権限を設定
+        manager.store.admins.insert(100);
+        manager
+            .store
+            .custom_permissions
+            .entry(100)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::Admin);
+
+        // スーパーユーザーを設定
+        manager.store.super_users.insert(999);
+        manager
+            .store
+            .custom_permissions
+            .entry(999)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::SuperUser);
+
+        // スーパーユーザーはAdmin権限を剥奪できる
+        let result = manager.revoke_permission(999, 100, Permission::Admin);
+        assert!(result.is_ok(), "SuperUser should be able to revoke Admin permission");
+        assert!(!manager.has_permission(100, &Permission::Admin), "Target user should not have Admin permission");
+    }
+
+    #[test]
+    fn test_cannot_grant_superuser_permission() {
+        let mut manager = PermissionManager::new();
+        // スーパーユーザーを設定
+        manager.store.super_users.insert(999);
+        manager
+            .store
+            .custom_permissions
+            .entry(999)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::SuperUser);
+
+        // スーパーユーザーであってもSuperUser権限の付与は禁止
+        let result = manager.grant_permission(999, 100, Permission::SuperUser);
+        assert!(result.is_err(), "Granting SuperUser permission should be forbidden");
+        if let Err(PermissionError::PermissionDenied(msg)) = result {
+            assert!(msg.contains("SUPER_USER_IDS"), "Error message should mention environment variable");
+        } else {
+            panic!("Expected PermissionDenied error");
+        }
+    }
+
+    #[test]
+    fn test_cannot_revoke_superuser_permission() {
+        let mut manager = PermissionManager::new();
+        // スーパーユーザーを設定
+        manager.store.super_users.insert(999);
+        manager
+            .store
+            .custom_permissions
+            .entry(999)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::SuperUser);
+
+        // SuperUser権限の剥奪は禁止
+        let result = manager.revoke_permission(999, 100, Permission::SuperUser);
+        assert!(result.is_err(), "Revoking SuperUser permission should be forbidden");
+        if let Err(PermissionError::PermissionDenied(msg)) = result {
+            assert!(msg.contains("SUPER_USER_IDS"), "Error message should mention environment variable");
+        } else {
+            panic!("Expected PermissionDenied error");
+        }
+    }
+
+    #[test]
+    fn test_regular_admin_cannot_grant_admin_permission() {
+        let mut manager = PermissionManager::new();
+        // 通常の管理者を設定（スーパーユーザーではない）
+        manager.store.admins.insert(1);
+        manager
+            .store
+            .custom_permissions
+            .entry(1)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::Admin);
+
+        // 通常の管理者はAdmin権限を付与できない
+        let result = manager.grant_permission(1, 100, Permission::Admin);
+        assert!(result.is_err(), "Regular admin should not be able to grant Admin permission");
+        if let Err(PermissionError::PermissionDenied(msg)) = result {
+            assert!(msg.contains("super users"), "Error message should mention super users");
+        } else {
+            panic!("Expected PermissionDenied error");
+        }
+    }
+
+    #[test]
+    fn test_regular_admin_cannot_revoke_admin_permission() {
+        let mut manager = PermissionManager::new();
+        // ターゲットユーザーにAdmin権限を設定
+        manager.store.admins.insert(100);
+        manager
+            .store
+            .custom_permissions
+            .entry(100)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::Admin);
+
+        // 通常の管理者を設定（スーパーユーザーではない）
+        manager.store.admins.insert(1);
+        manager
+            .store
+            .custom_permissions
+            .entry(1)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::Admin);
+
+        // 通常の管理者はAdmin権限を剥奪できない
+        let result = manager.revoke_permission(1, 100, Permission::Admin);
+        assert!(result.is_err(), "Regular admin should not be able to revoke Admin permission");
+        if let Err(PermissionError::PermissionDenied(msg)) = result {
+            assert!(msg.contains("super users"), "Error message should mention super users");
+        } else {
+            panic!("Expected PermissionDenied error");
+        }
+    }
+
+    #[test]
+    fn test_superuser_can_grant_regular_permissions() {
+        let mut manager = PermissionManager::new();
+        // スーパーユーザーを設定
+        manager.store.super_users.insert(999);
+        manager
+            .store
+            .custom_permissions
+            .entry(999)
+            .or_insert_with(HashSet::new)
+            .insert(Permission::SuperUser);
+
+        // スーパーユーザーは通常の権限を付与できる
+        let result = manager.grant_permission(999, 100, Permission::Schedule);
+        assert!(result.is_ok(), "SuperUser should be able to grant Schedule permission");
+        assert!(manager.has_permission(100, &Permission::Schedule), "Target should have Schedule permission");
     }
 }
