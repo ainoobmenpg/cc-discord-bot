@@ -1,0 +1,25 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "command": "mcp-filesystem",
+      "args": [],
+      "env": {},
+      "enabled": false,
+      "description": "Filesystem access via MCP"
+    },
+    {
+      "name": "git",
+      "command": "uvx",
+      "args": ["mcp-server-git"],
+      "env": {},
+      "enabled": false,
+      "description": "Git operations via MCP"
+    }
+  ],
+  "settings": {
+    "connection_timeout_seconds": 30,
+    "tool_execution_timeout_seconds": 60,
+    "max_concurrent_tools": 5
+  }
+}

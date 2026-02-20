@@ -35,7 +35,12 @@ impl EditTool {
     /// ユーザー固有のパスに変換
     fn get_user_path(path: &str, context: &ToolContext) -> String {
         let output_dir = context.get_user_output_dir();
-        format!("{}/{}", output_dir, path)
+        let path = path.trim_start_matches("./");
+        if path == "." || path.is_empty() {
+            output_dir.to_string()
+        } else {
+            format!("{}/{}", output_dir, path)
+        }
     }
 }
 

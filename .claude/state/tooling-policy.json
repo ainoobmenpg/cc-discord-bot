@@ -1,8 +1,9 @@
 {
   "lsp": {
     "available": true,
-    "plugins": " swift-lsp",
+    "plugins": " rust-analyzer-lsp swift-lsp",
     "available_by_ext": {
+      "rs": true,
       "swift": true
     },
     "last_used_prompt_seq": 0,

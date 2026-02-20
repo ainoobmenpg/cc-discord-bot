@@ -1,24 +1,73 @@
 {
   "version": "1.0",
-  "updatedAt": "2026-02-19T04:18:19.301Z",
-  "skills": {},
+  "updatedAt": "2026-02-20T10:17:27.877Z",
+  "skills": {
+    "setup": {
+      "count": 1,
+      "lastUsed": "2026-02-19T07:44:38.167Z"
+    }
+  },
   "commands": {
     "work": {
+      "count": 3,
+      "lastUsed": "2026-02-19T22:41:43.586Z"
+    },
+    "plan-with-agent": {
+      "count": 11,
+      "lastUsed": "2026-02-20T09:56:09.993Z"
+    },
+    "init": {
       "count": 1,
-      "lastUsed": "2026-02-19T03:59:13.781Z"
+      "lastUsed": "2026-02-19T07:16:40.916Z"
+    },
+    "harness-init": {
+      "count": 1,
+      "lastUsed": "2026-02-19T07:18:00.207Z"
+    },
+    "harness-update": {
+      "count": 1,
+      "lastUsed": "2026-02-19T07:44:01.085Z"
+    },
+    "Users/m2_macbookair_3911/GitHub/cc-discord-bot": {
+      "count": 1,
+      "lastUsed": "2026-02-19T16:17:49.487Z"
+    },
+    "Users/m2_macbookair_3911/GitHub/cc-discord-bot/": {
+      "count": 1,
+      "lastUsed": "2026-02-19T16:20:32.311Z"
+    },
+    "harness-review": {
+      "count": 5,
+      "lastUsed": "2026-02-20T04:40:48.419Z"
+    },
+    "breezing": {
+      "count": 8,
+      "lastUsed": "2026-02-20T10:15:09.561Z"
+    },
+    "maintenance": {
+      "count": 1,
+      "lastUsed": "2026-02-19T23:03:17.265Z"
     }
   },
   "agents": {
     "claude-code-harness:task-worker": {
+      "count": 12,
+      "lastUsed": "2026-02-20T10:17:27.876Z"
+    },
+    "Explore": {
       "count": 1,
-      "lastUsed": "2026-02-19T04:14:47.499Z"
+      "lastUsed": "2026-02-19T07:27:07.592Z"
+    },
+    "claude-code-harness:code-reviewer": {
+      "count": 6,
+      "lastUsed": "2026-02-20T04:53:09.058Z"
     }
   },
   "hooks": {
     "session-init": {
-      "triggered": 1,
+      "triggered": 2,
       "blocked": 0,
-      "lastTriggered": "2026-02-19T03:59:13.309Z"
+      "lastTriggered": "2026-02-19T23:21:44.566Z"
     },
     "pretooluse-guard": {
       "triggered": 2,
