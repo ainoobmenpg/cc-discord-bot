@@ -1,7 +1,9 @@
 use crate::tool::{Tool, ToolContext, ToolError, ToolResult};
 use async_trait::async_trait;
 use serde_json::{json, Value as JsonValue};
-use std::process::Command;
+use std::time::Duration;
+use tokio::process::Command as TokioCommand;
+use tokio::time::timeout;
 use tracing::{debug, warn};
 
 /// Bashツール（クロスプラットフォームシェルコマンド実行）
@@ -15,6 +17,7 @@ impl BashTool {
     /// 危険なコマンドをチェック
     fn is_dangerous_command(command: &str) -> bool {
         let dangerous_patterns = [
+            // 破壊的コマンド
             "rm -rf /",
             "rm -rf /*",
             ":(){:|:&};:",  // フォークボム
@@ -23,50 +26,77 @@ impl BashTool {
             "> /dev/sda",
             "chmod -R 777 /",
             "chown -R",
+            // ネットワーク
             "wget",
             "curl -X POST",
             "curl -X DELETE",
+            "curl -X PUT",
             "nc -l",
             "ncat",
+            // システムファイル
             "/etc/passwd",
             "/etc/shadow",
+            // 権限昇格
             "sudo",
             "su ",
             "passwd",
+            // コマンドインジェクション
+            "eval ",
+            "exec ",
+            "source ",
+            // 難読化実行
+            "base64 -d",
+            "base64 --decode",
+            // 環境変数
+            "printenv",
+            // シェルエスケープ
+            "$(",
+            "`",
+            // 危険なリダイレクト
+            "> /",
+            ">> /",
         ];
 
         let cmd_lower = command.to_lowercase();
         dangerous_patterns.iter().any(|p| cmd_lower.contains(&p.to_lowercase()))
     }
 
-    /// コマンドを実行
-    fn execute_command(command: &str, _timeout_secs: u64) -> Result<(String, String, bool), String> {
+    /// コマンドを非同期で実行（タイムアウト付き）
+    async fn execute_command_async(
+        command: &str,
+        timeout_secs: u64,
+        working_dir: &str,
+    ) -> Result<(String, String, bool), String> {
+        let timeout_duration = Duration::from_secs(timeout_secs);
+
         #[cfg(windows)]
-        {
-            // Windows: PowerShellを使用
-            let output = Command::new("powershell")
+        let result = {
+            let cmd = TokioCommand::new("powershell")
                 .args(["-Command", command])
-                .output()
-                .map_err(|e| format!("Failed to execute command: {}", e))?;
+                .current_dir(working_dir)
+                .output();
 
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-            Ok((stdout, stderr, output.status.success()))
-        }
+            timeout(timeout_duration, cmd).await
+        };
 
         #[cfg(not(windows))]
-        {
-            // Unix系: shを使用
-            let output = Command::new("sh")
+        let result = {
+            let cmd = TokioCommand::new("sh")
                 .args(["-c", command])
-                .output()
-                .map_err(|e| format!("Failed to execute command: {}", e))?;
+                .current_dir(working_dir)
+                .output();
 
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            timeout(timeout_duration, cmd).await
+        };
 
-            Ok((stdout, stderr, output.status.success()))
+        match result {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                Ok((stdout, stderr, output.status.success()))
+            }
+            Ok(Err(e)) => Err(format!("Failed to execute command: {}", e)),
+            Err(_) => Err(format!("Command timed out after {} seconds", timeout_secs)),
         }
     }
 }
@@ -98,14 +128,14 @@ impl Tool for BashTool {
         })
     }
 
-    async fn execute(&self, params: JsonValue, _context: &ToolContext) -> Result<ToolResult, ToolError> {
+    async fn execute(&self, params: JsonValue, context: &ToolContext) -> Result<ToolResult, ToolError> {
         let command = params["command"].as_str().ok_or_else(|| {
             ToolError::InvalidParams("Missing 'command' parameter".to_string())
         })?;
 
-        let timeout = params["timeout"].as_u64().unwrap_or(30).min(60);
+        let timeout_secs = params["timeout"].as_u64().unwrap_or(30).min(60);
 
-        debug!("Executing command: {} (timeout: {}s)", command, timeout);
+        debug!("Executing command: {} (timeout: {}s)", command, timeout_secs);
 
         // 危険なコマンドをブロック
         if Self::is_dangerous_command(command) {
@@ -122,8 +152,18 @@ impl Tool for BashTool {
             ));
         }
 
-        // コマンド実行
-        match Self::execute_command(command, timeout) {
+        // ユーザー固有の出力ディレクトリを作業ディレクトリとして使用
+        let working_dir = context.get_user_output_dir();
+
+        // ディレクトリが存在することを確認
+        if !std::path::Path::new(&working_dir).exists() {
+            std::fs::create_dir_all(&working_dir).map_err(|e| {
+                ToolError::ExecutionFailed(format!("Failed to create working directory: {}", e))
+            })?;
+        }
+
+        // コマンド実行（非同期、タイムアウト付き）
+        match Self::execute_command_async(command, timeout_secs, &working_dir).await {
             Ok((stdout, stderr, success)) => {
                 if success {
                     let output = if stdout.trim().is_empty() {
@@ -177,10 +217,28 @@ mod tests {
     }
 
     #[test]
+    fn test_is_dangerous_command_eval() {
+        assert!(BashTool::is_dangerous_command("eval $(cat file)"));
+    }
+
+    #[test]
+    fn test_is_dangerous_command_base64() {
+        assert!(BashTool::is_dangerous_command("echo Y2F0IC9ldGMvcGFzc3dk | base64 -d | sh"));
+    }
+
+    #[test]
+    fn test_is_dangerous_command_command_substitution() {
+        assert!(BashTool::is_dangerous_command("echo $(cat /etc/passwd)"));
+        assert!(BashTool::is_dangerous_command("echo `cat /etc/passwd`"));
+    }
+
+    #[test]
     fn test_is_dangerous_command_safe() {
         assert!(!BashTool::is_dangerous_command("ls -la"));
         assert!(!BashTool::is_dangerous_command("echo hello"));
         assert!(!BashTool::is_dangerous_command("cat file.txt"));
+        assert!(!BashTool::is_dangerous_command("npm install"));
+        assert!(!BashTool::is_dangerous_command("cargo build"));
     }
 
     #[test]
@@ -244,6 +302,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_bash_dangerous_command_eval() {
+        let tool = BashTool::new();
+        let ctx = create_test_context();
+
+        let result = tool
+            .execute(
+                json!({
+                    "command": "eval $(cat /etc/passwd)"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ToolError::PermissionDenied(_))));
+    }
+
+    #[tokio::test]
     async fn test_bash_invalid_command() {
         let tool = BashTool::new();
         let ctx = create_test_context();
@@ -280,5 +356,26 @@ mod tests {
             .unwrap();
 
         assert!(!result.is_error);
+    }
+
+    #[tokio::test]
+    async fn test_bash_timeout_execution() {
+        let tool = BashTool::new();
+        let ctx = create_test_context();
+
+        // タイムアウトが実際に機能することを確認
+        let result = tool
+            .execute(
+                json!({
+                    "command": "sleep 10",
+                    "timeout": 1
+                }),
+                &ctx,
+            )
+            .await;
+
+        // タイムアウトでエラーになるはず
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ToolError::ExecutionFailed(_))));
     }
 }

@@ -280,3 +280,12 @@ fix: ツールのパス解決をユーザー出力ディレクトリに統一"}}
 {"id":"event-000234","type":"tool.edit","ts":"2026-02-20T11:58:00Z","state":"stopped","data":{"file_path":"/Users/m2_macbookair_3911/GitHub/cc-discord-bot/cc-bot/src/tools/edit.rs"}}
 {"id":"event-000235","type":"tool.edit","ts":"2026-02-20T11:58:21Z","state":"stopped","data":{"file_path":"/Users/m2_macbookair_3911/GitHub/cc-discord-bot/cc-bot/src/tools/glob.rs"}}
 {"id":"event-000236","type":"tool.edit","ts":"2026-02-20T11:58:30Z","state":"stopped","data":{"file_path":"/Users/m2_macbookair_3911/GitHub/cc-discord-bot/cc-bot/src/tools/grep.rs"}}
+{"id":"event-000237","type":"tool.bash","ts":"2026-02-20T11:59:22Z","state":"stopped","data":{"command":"cd /Users/m2_macbookair_3911/GitHub/cc-discord-bot && git add -A && git commit -m "$(cat <<'EOF'
+fix: ツールパス解決の改善（./プレフィックス処理）
+
+edit/glob/grepツールでパスに./が含まれる場合の処理を改善
+
+Co-Authored-By: Claude Opus 4.6 <no"}}
+{"id":"event-000238","type":"tool.bash","ts":"2026-02-20T12:03:06Z","state":"stopped","data":{"command":"git log --oneline -10"}}
+{"id":"event-000239","type":"tool.bash","ts":"2026-02-20T12:03:06Z","state":"stopped","data":{"command":"base=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~5); git diff --name-only --diff-filter=ACMRTUXB $base...HEAD"}}
+{"id":"event-000240","type":"tool.bash","ts":"2026-02-20T12:03:13Z","state":"stopped","data":{"command":"git diff HEAD~4 --stat -- cc-bot/src/"}}
