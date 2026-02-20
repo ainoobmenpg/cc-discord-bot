@@ -71,6 +71,7 @@ pub async fn run(_ctx: &Context, interaction: &CommandInteraction, handler: &Han
         user_name,
         channel_id,
         base_output_dir: handler.base_output_dir.clone(),
+        custom_output_subdir: None,
     };
 
     // GLM APIに問い合わせ

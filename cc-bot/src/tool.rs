@@ -17,6 +17,8 @@ pub struct ToolContext {
     pub user_name: String,
     pub channel_id: u64,
     pub base_output_dir: String,
+    /// カスタム出力サブディレクトリ（ユーザー設定から取得）
+    pub custom_output_subdir: Option<String>,
 }
 
 impl ToolContext {
@@ -26,12 +28,44 @@ impl ToolContext {
             user_name,
             channel_id,
             base_output_dir,
+            custom_output_subdir: None,
         }
     }
 
+    /// カスタムサブディレクトリを指定して作成
+    pub fn with_custom_subdir(mut self, subdir: impl Into<String>) -> Self {
+        self.custom_output_subdir = Some(subdir.into());
+        self
+    }
+
+    /// ユーザー設定から出力先を設定して作成
+    pub fn with_user_settings(mut self, output_subdir: Option<&str>) -> Self {
+        self.custom_output_subdir = output_subdir.map(|s| s.to_string());
+        self
+    }
+
     /// ユーザー固有の出力ディレクトリを生成
-    /// format: output/{日付}/{ユーザー名}_{ユーザーID}/
+    /// 優先順位:
+    /// 1. カスタムサブディレクトリが設定されている場合: {base_output_dir}/{custom_subdir}/
+    /// 2. デフォルト: {base_output_dir}/{日付}/{ユーザー名}_{ユーザーID}/
     pub fn get_user_output_dir(&self) -> String {
+        // カスタムサブディレクトリが設定されている場合はそれを使用
+        if let Some(ref subdir) = self.custom_output_subdir {
+            // サブディレクトリ名をサニタイズ
+            let safe_subdir = subdir
+                .replace('/', "_")
+                .replace('\\', "_")
+                .replace(':', "_")
+                .replace('*', "_")
+                .replace('?', "_")
+                .replace('"', "_")
+                .replace('<', "_")
+                .replace('>', "_")
+                .replace('|', "_");
+            return format!("{}/{}", self.base_output_dir, safe_subdir);
+        }
+
+        // デフォルト: 日付ベースのパス
         let today = Utc::now().format("%Y-%m-%d").to_string();
         // ファイルシステムで問題になる文字のみ置換（日本語は許可）
         let safe_name = self.user_name
@@ -45,6 +79,12 @@ impl ToolContext {
             .replace('>', "_")
             .replace('|', "_");
         format!("{}/{}/{}_{}", self.base_output_dir, today, safe_name, self.user_id)
+    }
+
+    /// ユーザーIDベースの出力ディレクトリを生成（シンプル版）
+    /// format: {base_output_dir}/{user_id}/
+    pub fn get_user_id_output_dir(&self) -> String {
+        format!("{}/{}", self.base_output_dir, self.user_id)
     }
 }
 
@@ -313,5 +353,60 @@ mod tests {
 
         let result = manager.execute("unknown", json!({}), &ctx).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tool_context_with_custom_subdir() {
+        let ctx = ToolContext::new(123, "test_user".to_string(), 456, "output".to_string())
+            .with_custom_subdir("my_custom_dir");
+
+        let output_dir = ctx.get_user_output_dir();
+        assert_eq!(output_dir, "output/my_custom_dir");
+        // カスタムサブディレクトリ使用時は日付やユーザー名が含まれない
+        assert!(!output_dir.contains("test_user"));
+        assert!(!output_dir.contains("123"));
+    }
+
+    #[test]
+    fn test_tool_context_custom_subdir_sanitization() {
+        let ctx = ToolContext::new(123, "test_user".to_string(), 456, "output".to_string())
+            .with_custom_subdir("dir/with:bad*chars?");
+
+        let output_dir = ctx.get_user_output_dir();
+        // サブディレクトリ内の危険な文字がサニタイズされている
+        // base_output_dirとサブディレクトリの間の / は残るが、
+        // 入力内の / も _ に置換されるため "dir_with" になる
+        assert_eq!(output_dir, "output/dir_with_bad_chars_");
+        // 元の文字列にあった危険な文字はサニタイズされている
+        assert!(!output_dir.contains("dir/with"));
+        assert!(!output_dir.contains(":bad"));
+    }
+
+    #[test]
+    fn test_tool_context_with_user_settings_some() {
+        let ctx = ToolContext::new(123, "test_user".to_string(), 456, "output".to_string())
+            .with_user_settings(Some("user_custom_path"));
+
+        let output_dir = ctx.get_user_output_dir();
+        assert_eq!(output_dir, "output/user_custom_path");
+    }
+
+    #[test]
+    fn test_tool_context_with_user_settings_none() {
+        let ctx = ToolContext::new(123, "test_user".to_string(), 456, "output".to_string())
+            .with_user_settings(None);
+
+        let output_dir = ctx.get_user_output_dir();
+        // Noneの場合はデフォルトのパス生成が使用される
+        assert!(output_dir.contains("test_user_123"));
+        assert!(output_dir.contains("output"));
+    }
+
+    #[test]
+    fn test_tool_context_get_user_id_output_dir() {
+        let ctx = ToolContext::new(99999, "test_user".to_string(), 456, "/tmp/output".to_string());
+
+        let output_dir = ctx.get_user_id_output_dir();
+        assert_eq!(output_dir, "/tmp/output/99999");
     }
 }

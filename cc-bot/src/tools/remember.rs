@@ -69,6 +69,7 @@ impl Tool for RememberTool {
         match self.memory_store.add_memory(NewMemory {
             user_id: context.user_id,
             content: content.clone(),
+            ..Default::default()
         }) {
             Ok(memory) => {
                 info!("Saved memory {} for user {}", memory.id, context.user_id);
@@ -308,14 +309,17 @@ mod tests {
         store.add_memory(NewMemory {
             user_id: 12345,
             content: "[shopping] buy milk".to_string(),
+            ..Default::default()
         }).unwrap();
         store.add_memory(NewMemory {
             user_id: 12345,
             content: "[work] meeting notes".to_string(),
+            ..Default::default()
         }).unwrap();
         store.add_memory(NewMemory {
             user_id: 12345,
             content: "[personal] gym at 5pm".to_string(),
+            ..Default::default()
         }).unwrap();
 
         let tool = RecallTool::new(store);
@@ -348,10 +352,12 @@ mod tests {
         store.add_memory(NewMemory {
             user_id: 12345,
             content: "[key1] value1".to_string(),
+            ..Default::default()
         }).unwrap();
         store.add_memory(NewMemory {
             user_id: 12345,
             content: "[key2] value2".to_string(),
+            ..Default::default()
         }).unwrap();
 
         let tool = RecallTool::new(store);
@@ -385,10 +391,12 @@ mod tests {
         store.add_memory(NewMemory {
             user_id: 12345,
             content: "[my_secret] secret data".to_string(),
+            ..Default::default()
         }).unwrap();
         store.add_memory(NewMemory {
             user_id: 99999,
             content: "[other_secret] other data".to_string(),
+            ..Default::default()
         }).unwrap();
 
         let tool = RecallTool::new(store);

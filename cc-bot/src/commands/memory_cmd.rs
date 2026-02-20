@@ -16,10 +16,22 @@ pub fn register() -> CreateCommand {
                 .add_sub_option(
                     CreateCommandOption::new(CommandOptionType::String, "content", "内容")
                         .required(true),
+                )
+                .add_sub_option(
+                    CreateCommandOption::new(CommandOptionType::String, "category", "カテゴリ (デフォルト: general)")
+                        .required(false),
+                )
+                .add_sub_option(
+                    CreateCommandOption::new(CommandOptionType::String, "tag", "タグ (カンマ区切りで複数指定可)")
+                        .required(false),
                 ),
         )
         .add_option(
-            CreateCommandOption::new(CommandOptionType::SubCommand, "list", "メモリ一覧"),
+            CreateCommandOption::new(CommandOptionType::SubCommand, "list", "メモリ一覧")
+                .add_sub_option(
+                    CreateCommandOption::new(CommandOptionType::String, "category", "カテゴリでフィルタ")
+                        .required(false),
+                ),
         )
         .add_option(
             CreateCommandOption::new(CommandOptionType::SubCommand, "search", "メモリ検索")
@@ -56,7 +68,7 @@ pub async fn run(_ctx: &Context, interaction: &CommandInteraction, handler: &Han
 
     match subcommand {
         Some(("add", sub_opts)) => handle_add(user_id, sub_opts, &handler.memory_store),
-        Some(("list", _)) => handle_list(user_id, &handler.memory_store),
+        Some(("list", sub_opts)) => handle_list(user_id, sub_opts, &handler.memory_store),
         Some(("search", sub_opts)) => handle_search(user_id, sub_opts, &handler.memory_store),
         Some(("delete", sub_opts)) => handle_delete(user_id, sub_opts, &handler.memory_store),
         _ => "不明なサブコマンドです。".to_string(),
@@ -86,37 +98,118 @@ fn handle_add(
         return "メモリ内容を入力してください。".to_string();
     }
 
+    // categoryオプションを取得（オプション）
+    let category = sub_opts
+        .iter()
+        .find(|opt| opt.name == "category")
+        .and_then(|opt| {
+            if let CommandDataOptionValue::String(s) = &opt.value {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        });
+
+    // tagオプションを取得（オプション、カンマ区切りで複数指定可）
+    let tags: Option<Vec<String>> = sub_opts
+        .iter()
+        .find(|opt| opt.name == "tag")
+        .and_then(|opt| {
+            if let CommandDataOptionValue::String(s) = &opt.value {
+                let parsed: Vec<String> = s
+                    .split(',')
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect();
+                if parsed.is_empty() {
+                    None
+                } else {
+                    Some(parsed)
+                }
+            } else {
+                None
+            }
+        });
+
     let new_memory = memory_store::NewMemory {
         user_id,
         content: content.to_string(),
+        category: category.map(|s| s.to_string()),
+        tags: tags.clone(),
+        ..Default::default()
     };
 
     match memory_store.add_memory(new_memory) {
-        Ok(memory) => format!("メモリを追加しました (ID: {}):\n{}", memory.id, memory.content),
+        Ok(memory) => {
+            let category_display = if memory.category == "general" {
+                String::new()
+            } else {
+                format!(" [{}]", memory.category)
+            };
+            let tags_display = if memory.tags.is_empty() {
+                String::new()
+            } else {
+                format!(" #{}", memory.tags.join(" #"))
+            };
+            format!(
+                "メモリを追加しました (ID: {}){}{}:\n{}",
+                memory.id, category_display, tags_display, memory.content
+            )
+        }
         Err(e) => format!("エラー: {}", e),
     }
 }
 
 /// メモリ一覧
-fn handle_list(user_id: u64, memory_store: &memory_store::MemoryStore) -> String {
-    match memory_store.list_memories(user_id, 10) {
+fn handle_list(
+    user_id: u64,
+    sub_opts: &[serenity::model::application::CommandDataOption],
+    memory_store: &memory_store::MemoryStore,
+) -> String {
+    // categoryオプションを取得（オプション）
+    let category = sub_opts
+        .iter()
+        .find(|opt| opt.name == "category")
+        .and_then(|opt| {
+            if let CommandDataOptionValue::String(s) = &opt.value {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        });
+
+    let memories = match category {
+        Some(cat) => memory_store.list_memories_by_category(user_id, cat, 10),
+        None => memory_store.list_memories(user_id, 10),
+    };
+
+    match memories {
         Ok(memories) => {
             if memories.is_empty() {
-                "メモリがありません。".to_string()
+                match category {
+                    Some(cat) => format!("カテゴリ「{}」のメモリがありません。", cat),
+                    None => "メモリがありません。".to_string(),
+                }
             } else {
                 let list: Vec<String> = memories
                     .iter()
                     .map(|m| {
                         let date = m.created_at.format("%m/%d %H:%M");
-                        format!("- [{}] {} (ID: {})", date, m.content, m.id)
+                        let category_display = if m.category == "general" {
+                            String::new()
+                        } else {
+                            format!("[{}] ", m.category)
+                        };
+                        format!("- [{}] {}{} (ID: {})", date, category_display, m.content, m.id)
                     })
                     .collect();
 
-                format!(
-                    "**あなたのメモリ ({}件)**\n{}",
-                    memories.len(),
-                    list.join("\n")
-                )
+                let header = match category {
+                    Some(cat) => format!("**あなたのメモリ [{}] ({}件)**", cat, memories.len()),
+                    None => format!("**あなたのメモリ ({}件)**", memories.len()),
+                };
+
+                format!("{}\n{}", header, list.join("\n"))
             }
         }
         Err(e) => format!("エラー: {}", e),

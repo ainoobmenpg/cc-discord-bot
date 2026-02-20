@@ -407,6 +407,7 @@ async fn create_memory(
     let new_memory = crate::memory_store::NewMemory {
         user_id: req.user_id,
         content: req.content,
+        ..Default::default()
     };
 
     match state.memory_store.add_memory(new_memory) {

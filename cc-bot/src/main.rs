@@ -6,11 +6,14 @@ mod memory;
 mod memory_store;
 mod permission;
 mod rate_limiter;
+mod role_config;
 mod scheduler;
 mod schedule_store;
 mod session;
 mod tool;
 mod tools;
+mod user_roles;
+mod user_settings;
 mod validation;
 
 use memory_store::MemoryStore;
@@ -31,8 +34,34 @@ use tracing::{debug, error, info, warn};
 /// 管理者ユーザーIDのキャッシュ
 static ADMIN_USER_IDS: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
 
-/// 管理者かどうかを判定
+/// スーパーユーザーIDのキャッシュ
+static SUPER_USER_IDS: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
+
+/// スーパーユーザーかどうかを判定
+fn is_super_user(user_id: u64) -> bool {
+    let super_user_ids = SUPER_USER_IDS.get_or_init(|| {
+        match env::var("SUPER_USER_IDS") {
+            Ok(ids) => ids
+                .split(',')
+                .filter_map(|s| s.trim().parse::<u64>().ok())
+                .collect(),
+            Err(_) => {
+                debug!("SUPER_USER_IDS environment variable not set");
+                Vec::new()
+            }
+        }
+    });
+
+    !super_user_ids.is_empty() && super_user_ids.contains(&user_id)
+}
+
+/// 管理者かどうかを判定（スーパーユーザーも管理者として扱う）
 fn is_admin(user_id: u64) -> bool {
+    // スーパーユーザーは常に管理者として扱う
+    if is_super_user(user_id) {
+        return true;
+    }
+
     let admin_ids = ADMIN_USER_IDS.get_or_init(|| {
         match env::var("ADMIN_USER_IDS") {
             Ok(ids) => ids
@@ -58,6 +87,8 @@ pub struct Handler {
     rate_limiter: Arc<Mutex<rate_limiter::RateLimiter>>,
     permission_manager: Arc<RwLock<permission::PermissionManager>>,
     memory_store: Arc<MemoryStore>,
+    /// ユーザー設定ストア
+    pub user_settings_store: Arc<user_settings::UserSettingsStore>,
     #[allow(dead_code)]
     http: Arc<Http>,
     /// 処理済みメッセージID（重複防止）
@@ -65,6 +96,8 @@ pub struct Handler {
     processed_messages: Arc<Mutex<HashSet<u64>>>,
     /// ツール出力のベースディレクトリ
     pub base_output_dir: String,
+    /// ロール設定
+    pub role_config: Arc<RwLock<role_config::RoleConfig>>,
 }
 
 #[serenity::async_trait]
@@ -102,6 +135,7 @@ impl Handler {
             "memory" => commands::memory_cmd::run(ctx, command, self).await,
             "permission" => commands::permission::run(ctx, command, self).await,
             "schedule" => commands::schedule::run(ctx, command, self).await,
+            "settings" => commands::settings::run(ctx, command, self).await,
             "tools" => commands::tools::run(ctx, command, self).await,
             _ => "不明なコマンドです。".to_string(),
         };
@@ -314,6 +348,22 @@ async fn main() {
         info!("Registered {} tools total", tool_manager.list_tools().len());
     }
 
+    // ロール設定を読み込み
+    let role_config = Arc::new(RwLock::new(
+        role_config::RoleConfig::load("data").await.unwrap_or_else(|e| {
+            error!("Failed to load role config: {}, creating new", e);
+            role_config::RoleConfig::new()
+        })
+    ));
+
+    // ユーザー設定ストアを読み込み
+    let user_settings_store = Arc::new(
+        user_settings::UserSettingsStore::load("data").unwrap_or_else(|e| {
+            error!("Failed to load user settings store: {}, creating new", e);
+            user_settings::UserSettingsStore::new().expect("Failed to create user settings store")
+        })
+    );
+
     let handler = Handler {
         glm_client: glm_client.clone(),
         session_manager: session_manager.clone(),
@@ -322,9 +372,11 @@ async fn main() {
         rate_limiter,
         permission_manager,
         memory_store: memory_store.clone(),
+        user_settings_store: user_settings_store.clone(),
         http,
         processed_messages: Arc::new(Mutex::new(HashSet::new())),
         base_output_dir: base_output_dir.clone(),
+        role_config,
     };
 
     // APIサーバーを並行起動

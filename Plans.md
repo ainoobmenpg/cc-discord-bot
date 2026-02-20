@@ -10,12 +10,14 @@
 | v0.4.0 | スケジューラー | ✅ |
 | v0.5.0 | セキュリティ | ✅ |
 | v0.6.0 | メモリシステム | ✅ |
-| v0.7.0 | Slash Commands基盤 | ✅ |
-| v0.7.1 | Slash Commands実装完了 | ✅ |
-| v0.7.2 | コード品質改善 | ✅ |
-| v0.8.0 | CLI/HTTP API | ✅ |
-| v0.8.1 | APIセキュリティ強化 | ✅ |
+| v0.7.x | Slash Commands | ✅ |
+| v0.8.x | CLI/HTTP API | ✅ |
 | v0.9.0 | Windows対応 | ✅ |
+| v1.0.0 | 権限システム再設計 | ✅ |
+| v1.1.0 | ユーザー毎設定管理 | ✅ |
+| v1.2.0 | 個人メモリ強化 | ✅ |
+
+> 📦 アーカイブ: [Plans-archive-2026-02-20.md](.claude/memory/archive/Plans-archive-2026-02-20.md)
 
 ---
 
@@ -37,80 +39,114 @@
 DISCORD_BOT_TOKEN=xxx
 GLM_API_KEY=xxx
 GLM_MODEL=glm-4.7
-ADMIN_USER_IDS=123,456
-BASE_OUTPUT_DIR=/tmp/cc-bot        # ツール出力ディレクトリ（オプション）
+ADMIN_USER_IDS=123,456          # 管理者ユーザー
+SUPER_USER_IDS=789              # 制限なしユーザー（環境変数のみ）
+BASE_OUTPUT_DIR=/tmp/cc-bot
+ALLOWED_ORIGINS=http://localhost:3000
+API_KEY=your-api-key
 ```
 
----
+## 権限階層
 
-## v0.7.2 - コード品質改善 ✅
-
-**完了日時**: 2026-02-20
-
-### 完了タスク
-
-- [x] 古いプレフィックスコマンド(!xxx)の削除
-- [x] デッドコード警告の解消（#[allow(dead_code)]追加）
-- [x] `base_output_dir` を環境変数から読み込み（BASE_OUTPUT_DIR）
+| 権限 | 設定方法 | アクセス範囲 |
+|------|---------|-------------|
+| **SuperUser** | 環境変数 | 全ディレクトリ、全操作（制限なし） |
+| Admin | 環境変数/ロール/コマンド | + ユーザー権限管理 |
+| Trusted | ロール/コマンド | + 書き込み、スケジュール |
+| Member | デフォルト | 読み取りのみ |
 
 ---
 
-## v0.7.1 - Slash Commands完成 ✅
-
-**完了日時**: 2026-02-20
-
-### 完了タスク
-
-- [x] `/ask` コマンド実装（GLM-4.7 API呼び出し、セッション履歴連携）
-- [x] `/clear` コマンド実装（セッション履歴クリア）
-- [x] `/tools` コマンド実装（ツール一覧表示）
-- [x] `/schedule` コマンド実装（add/list/remove）
-- [x] `/memory` コマンド実装（add/list/search/delete）
-- [x] `/permission` コマンド実装（list/grant/revoke）
-- [x] `/admin` コマンド実装（status/reload）
+**テスト数**: 154
 
 ---
 
-## v0.8.0 - CLI/HTTP API ✅
+## v1.0.0 - 権限システム再設計 🚧 [feature:security]
 
-**完了日時**: 2026-02-20
+### 概要
 
-### 完了タスク
+SuperUser権限追加、ロール連携、コマンドベース権限管理を統合。
 
-- [x] HTTP API基盤（axum）
-- [x] `GET /api/health` - ヘルスチェック
-- [x] `POST /api/chat` - GLM-4.7に問い合わせ
-- [x] `GET/POST/DELETE /api/schedules` - スケジュール管理
-- [x] `GET/POST/DELETE /api/memories` - メモリ管理
-- [x] `cc-cli` CLIツール作成
+### 権限チェックフロー
 
----
-
-## v0.9.0 - Windows対応 ✅
-
-- [x] `run.bat` 作成
-- [x] `run.ps1` 作成
-
----
-
-## v0.8.1 - APIセキュリティ強化 ✅
-
-**完了日時**: 2026-02-20
-
-### 完了タスク
-
-- [x] CORS設定を環境変数で制御（ALLOWED_ORIGINS）
-- [x] APIキー認証ミドルウェア追加（API_KEY）
-- [x] 入力バリデーション（メッセージ長制限: 4000文字）
-- [x] session_managerに#[allow(dead_code)]追加
-
-### 環境変数（追加）
-
-```bash
-ALLOWED_ORIGINS=http://localhost:3000,https://example.com  # 許可するオリジン（カンマ区切り）
-API_KEY=your-api-key                                       # API認証キー（省略時は認証スキップ）
+```
+1. SuperUser? → 全チェックバイパス
+2. 個別ユーザー権限? → 適用
+3. ロール権限? → 適用
+4. デフォルト権限 → 適用
 ```
 
+### 設定ファイル形式（data/roles.json）
+
+```json
+{
+  "roles": {
+    "Admin": ["Admin", "FileRead", "FileWrite", "Schedule"],
+    "Trusted": ["FileRead", "FileWrite", "Schedule"],
+    "Member": ["FileRead"]
+  },
+  "default_permissions": ["FileRead"]
+}
+```
+
+### タスク
+
+- [ ] `Permission::SuperUser` 追加
+- [ ] `SUPER_USER_IDS` 環境変数読み込み
+- [ ] SuperUser時の全制限バイパス実装
+- [ ] `src/role_config.rs` - ロール設定ファイル読み込み
+- [ ] `RoleConfig` struct実装（Serde deserialize）
+- [ ] `PermissionManager`にロールベース権限チェック追加
+- [ ] Discord Guild APIからユーザーロール取得
+- [ ] `/permission roles` - ロール-権限マッピング表示
+- [ ] `/permission sync` - ロールと権限を同期
+- [ ] `/permission grant @user <perm>` - 個別権限付与
+- [ ] `/permission revoke @user <perm>` - 個別権限剥奪
+
 ---
 
-**テスト数**: 113
+## v1.1.0 - ユーザー毎設定管理 🚧
+
+### 出力先パス
+
+```
+{BASE_OUTPUT_DIR}/{user_id}/           # デフォルト
+{BASE_OUTPUT_DIR}/{custom_subdir}/     # カスタム設定時
+```
+
+### タスク
+
+- [ ] `src/user_settings.rs` - ユーザー設定ストア
+- [ ] `UserSettings` struct実装
+- [ ] `ToolContext`に出力先パス生成ロジック追加
+- [ ] `/settings output` - 出力先設定コマンド
+- [ ] `/settings show` - 現在の設定表示
+
+---
+
+## v1.2.0 - 個人メモリ強化 🚧
+
+### 拡張メモリスキーマ
+
+```sql
+ALTER TABLE memories ADD COLUMN category TEXT DEFAULT 'general';
+ALTER TABLE memories ADD COLUMN tags TEXT DEFAULT '[]';
+ALTER TABLE memories ADD COLUMN metadata TEXT DEFAULT '{}';
+```
+
+### タスク
+
+- [ ] `Memory` structに`category`, `tags`, `metadata`追加
+- [ ] マイグレーションロジック（既存DB互換）
+- [ ] `/memory add --category` - カテゴリ付きメモリ追加
+- [ ] `/memory add --tag` - タグ付きメモリ追加
+- [ ] `/memory list --category` - カテゴリでフィルタ
+- [ ] `/memory search` - 全文検索（LIKE実装）
+
+---
+
+## 将来機能（Backlog）
+
+- v1.3.0: メモリエクスポート（Markdown/JSON）
+- v1.4.0: チャンネル毎設定
+- v2.0.0: マルチサーバー対応

@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use thiserror::Error;
@@ -33,15 +34,24 @@ pub struct Memory {
     pub id: MemoryId,
     pub user_id: u64,
     pub content: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub metadata: HashMap<String, String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 /// 新規メモリ作成用
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NewMemory {
     pub user_id: u64,
     pub content: String,
+    #[allow(dead_code)]
+    pub category: Option<String>,
+    #[allow(dead_code)]
+    pub tags: Option<Vec<String>>,
+    #[allow(dead_code)]
+    pub metadata: Option<HashMap<String, String>>,
 }
 
 /// メモリストア（SQLite永続化）
@@ -102,11 +112,17 @@ impl MemoryStore {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 content TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'general',
+                tags TEXT NOT NULL DEFAULT '[]',
+                metadata TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )",
             [],
         ).map_err(|e| MemoryError::DatabaseError(format!("Failed to create table: {}", e)))?;
+
+        // マイグレーション: 古いテーブルに新しいカラムを追加
+        self.run_migrations(&conn)?;
 
         // 検索用インデックス
         conn.execute(
@@ -119,7 +135,53 @@ impl MemoryStore {
             [],
         ).map_err(|e| MemoryError::DatabaseError(format!("Failed to create index: {}", e)))?;
 
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_category ON memories(category)",
+            [],
+        ).map_err(|e| MemoryError::DatabaseError(format!("Failed to create index: {}", e)))?;
+
         debug!("Memory store initialized");
+        Ok(())
+    }
+
+    /// マイグレーションを実行
+    fn run_migrations(&self, conn: &Connection) -> Result<(), MemoryError> {
+        // カラムの存在チェックを行い、存在しなければ追加
+        let columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(memories)")
+            .and_then(|mut stmt| {
+                let column_iter = stmt.query_map([], |row| row.get::<_, String>(1))?;
+                column_iter.collect::<Result<Vec<_>, _>>()
+            })
+            .map_err(|e| MemoryError::DatabaseError(format!("Failed to get table info: {}", e)))?;
+
+        // categoryカラムがない場合は追加
+        if !columns.iter().any(|c| c == "category") {
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN category TEXT NOT NULL DEFAULT 'general'",
+                [],
+            ).map_err(|e| MemoryError::DatabaseError(format!("Failed to add category column: {}", e)))?;
+            info!("Migration: Added category column");
+        }
+
+        // tagsカラムがない場合は追加
+        if !columns.iter().any(|c| c == "tags") {
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+                [],
+            ).map_err(|e| MemoryError::DatabaseError(format!("Failed to add tags column: {}", e)))?;
+            info!("Migration: Added tags column");
+        }
+
+        // metadataカラムがない場合は追加
+        if !columns.iter().any(|c| c == "metadata") {
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'",
+                [],
+            ).map_err(|e| MemoryError::DatabaseError(format!("Failed to add metadata column: {}", e)))?;
+            info!("Migration: Added metadata column");
+        }
+
         Ok(())
     }
 
@@ -132,14 +194,19 @@ impl MemoryStore {
         let now = Utc::now();
         let created_at = now.to_rfc3339();
         let updated_at = now.to_rfc3339();
+        let category = new_memory.category.clone().unwrap_or_else(|| "general".to_string());
+        let tags = serde_json::to_string(&new_memory.tags.clone().unwrap_or_default())
+            .unwrap_or_else(|_| "[]".to_string());
+        let metadata = serde_json::to_string(&new_memory.metadata.clone().unwrap_or_default())
+            .unwrap_or_else(|_| "{}".to_string());
 
         let conn = self.conn.lock().map_err(|e| {
             MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
         })?;
 
         conn.execute(
-            "INSERT INTO memories (user_id, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params![new_memory.user_id as i64, new_memory.content, created_at, updated_at],
+            "INSERT INTO memories (user_id, content, category, tags, metadata, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![new_memory.user_id as i64, new_memory.content, category, tags, metadata, created_at, updated_at],
         ).map_err(|e| MemoryError::DatabaseError(format!("Failed to insert memory: {}", e)))?;
 
         let id = conn.last_insert_rowid();
@@ -148,6 +215,9 @@ impl MemoryStore {
             id,
             user_id: new_memory.user_id,
             content: new_memory.content,
+            category,
+            tags: new_memory.tags.unwrap_or_default(),
+            metadata: new_memory.metadata.unwrap_or_default(),
             created_at: now,
             updated_at: now,
         })
@@ -161,7 +231,7 @@ impl MemoryStore {
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, user_id, content, created_at, updated_at
+                "SELECT id, user_id, content, category, tags, metadata, created_at, updated_at
                  FROM memories
                  WHERE user_id = ?1
                  ORDER BY created_at DESC
@@ -175,10 +245,58 @@ impl MemoryStore {
                     id: row.get(0)?,
                     user_id: row.get::<_, i64>(1)? as u64,
                     content: row.get(2)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
+                    category: row.get(3)?,
+                    tags: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
+                    metadata: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            })
+            .map_err(|e| MemoryError::DatabaseError(format!("Failed to query memories: {}", e)))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| MemoryError::DatabaseError(format!("Failed to collect memories: {}", e)))?;
+
+        Ok(memories)
+    }
+
+    /// カテゴリでフィルタリングしてメモリ一覧を取得
+    pub fn list_memories_by_category(
+        &self,
+        user_id: u64,
+        category: &str,
+        limit: usize,
+    ) -> Result<Vec<Memory>, MemoryError> {
+        let conn = self.conn.lock().map_err(|e| {
+            MemoryError::DatabaseError(format!("Failed to lock connection: {}", e))
+        })?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, user_id, content, category, tags, metadata, created_at, updated_at
+                 FROM memories
+                 WHERE user_id = ?1 AND category = ?2
+                 ORDER BY created_at DESC
+                 LIMIT ?3",
+            )
+            .map_err(|e| MemoryError::DatabaseError(format!("Failed to prepare statement: {}", e)))?;
+
+        let memories = stmt
+            .query_map(params![user_id as i64, category, limit as i64], |row| {
+                Ok(Memory {
+                    id: row.get(0)?,
+                    user_id: row.get::<_, i64>(1)? as u64,
+                    content: row.get(2)?,
+                    category: row.get(3)?,
+                    tags: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
+                    metadata: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
                 })
@@ -204,7 +322,7 @@ impl MemoryStore {
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, user_id, content, created_at, updated_at
+                "SELECT id, user_id, content, category, tags, metadata, created_at, updated_at
                  FROM memories
                  WHERE user_id = ?1 AND content LIKE ?2
                  ORDER BY created_at DESC
@@ -218,10 +336,13 @@ impl MemoryStore {
                     id: row.get(0)?,
                     user_id: row.get::<_, i64>(1)? as u64,
                     content: row.get(2)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
+                    category: row.get(3)?,
+                    tags: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
+                    metadata: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
                 })
@@ -242,17 +363,20 @@ impl MemoryStore {
         // まず対象を取得してユーザー確認
         let memory: Option<Memory> = conn
             .query_row(
-                "SELECT id, user_id, content, created_at, updated_at FROM memories WHERE id = ?1",
+                "SELECT id, user_id, content, category, tags, metadata, created_at, updated_at FROM memories WHERE id = ?1",
                 params![id],
                 |row| {
                     Ok(Memory {
                         id: row.get(0)?,
                         user_id: row.get::<_, i64>(1)? as u64,
                         content: row.get(2)?,
-                        created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
+                        category: row.get(3)?,
+                        tags: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
+                        metadata: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
+                        created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
                             .map(|dt| dt.with_timezone(&Utc))
                             .unwrap_or_else(|_| Utc::now()),
-                        updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)
+                        updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
                             .map(|dt| dt.with_timezone(&Utc))
                             .unwrap_or_else(|_| Utc::now()),
                     })
@@ -328,6 +452,7 @@ mod tests {
             .add_memory(NewMemory {
                 user_id: 12345,
                 content: "Test memory".to_string(),
+                ..Default::default()
             })
             .unwrap();
 
@@ -346,6 +471,7 @@ mod tests {
             .add_memory(NewMemory {
                 user_id: 12345,
                 content: "Hello world".to_string(),
+                ..Default::default()
             })
             .unwrap();
 
@@ -353,6 +479,7 @@ mod tests {
             .add_memory(NewMemory {
                 user_id: 12345,
                 content: "Goodbye moon".to_string(),
+                ..Default::default()
             })
             .unwrap();
 
@@ -369,6 +496,7 @@ mod tests {
             .add_memory(NewMemory {
                 user_id: 12345,
                 content: "To be deleted".to_string(),
+                ..Default::default()
             })
             .unwrap();
 
@@ -393,6 +521,7 @@ mod tests {
             .add_memory(NewMemory {
                 user_id: 12345,
                 content: "Memory 1".to_string(),
+                ..Default::default()
             })
             .unwrap();
 
@@ -400,6 +529,7 @@ mod tests {
             .add_memory(NewMemory {
                 user_id: 12345,
                 content: "Memory 2".to_string(),
+                ..Default::default()
             })
             .unwrap();
 
@@ -417,8 +547,68 @@ mod tests {
         let result = store.add_memory(NewMemory {
             user_id: 12345,
             content: "".to_string(),
+            ..Default::default()
         });
 
         assert!(matches!(result, Err(MemoryError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_memory_with_category_and_tags() {
+        let store = MemoryStore::new().unwrap();
+
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "test".to_string());
+
+        let memory = store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "Tagged memory".to_string(),
+                category: Some("work".to_string()),
+                tags: Some(vec!["important".to_string(), "project".to_string()]),
+                metadata: Some(metadata),
+            })
+            .unwrap();
+
+        assert_eq!(memory.category, "work");
+        assert_eq!(memory.tags, vec!["important", "project"]);
+        assert_eq!(memory.metadata.get("source"), Some(&"test".to_string()));
+    }
+
+    #[test]
+    fn test_migration_from_old_schema() {
+        // 古いスキーマ（category, tags, metadataなし）でDBを作成
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+            [],
+        ).unwrap();
+
+        // 古いスキーマでデータを挿入
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO memories (user_id, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![12345i64, "Old memory", now, now],
+        ).unwrap();
+
+        // MemoryStoreとして読み込み（マイグレーションが実行される）
+        let store = MemoryStore {
+            conn: Mutex::new(conn),
+        };
+        store.initialize().unwrap();
+
+        // マイグレーション後、データが正しく読み込めることを確認
+        let memories = store.list_memories(12345, 10).unwrap();
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].content, "Old memory");
+        assert_eq!(memories[0].category, "general"); // デフォルト値
+        assert!(memories[0].tags.is_empty()); // デフォルト値
+        assert!(memories[0].metadata.is_empty()); // デフォルト値
     }
 }

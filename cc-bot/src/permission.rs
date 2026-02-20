@@ -19,6 +19,8 @@ pub enum Permission {
     Schedule,
     /// 管理者権限
     Admin,
+    /// スーパーユーザー権限（全権限を持ち、全チェックで最優先）
+    SuperUser,
 }
 
 impl Permission {
@@ -29,6 +31,7 @@ impl Permission {
             "filewrite" | "file_write" => Some(Permission::FileWrite),
             "schedule" => Some(Permission::Schedule),
             "admin" => Some(Permission::Admin),
+            "superuser" | "super_user" | "super-user" => Some(Permission::SuperUser),
             _ => None,
         }
     }
@@ -40,6 +43,7 @@ impl Permission {
             Permission::FileWrite => "FileWrite",
             Permission::Schedule => "Schedule",
             Permission::Admin => "Admin",
+            Permission::SuperUser => "SuperUser",
         }
     }
 }
@@ -82,6 +86,8 @@ struct PermissionStore {
     custom_permissions: HashMap<u64, HashSet<Permission>>,
     /// 管理者ユーザーID
     admins: HashSet<u64>,
+    /// スーパーユーザーID
+    super_users: HashSet<u64>,
     /// バージョン
     version: u32,
 }
@@ -91,6 +97,7 @@ impl Default for PermissionStore {
         Self {
             custom_permissions: HashMap::new(),
             admins: HashSet::new(),
+            super_users: HashSet::new(),
             version: 1,
         }
     }
@@ -136,6 +143,31 @@ impl PermissionManager {
         debug!("Loaded {} admin users", self.store.admins.len());
     }
 
+    /// 環境変数からスーパーユーザーを読み込み
+    pub fn load_super_users_from_env(&mut self) {
+        if let Ok(super_user_ids) = env::var("SUPER_USER_IDS") {
+            for id_str in super_user_ids.split(',') {
+                let id_str = id_str.trim();
+                if id_str.is_empty() {
+                    continue;
+                }
+                if let Ok(id) = id_str.parse::<u64>() {
+                    self.store.super_users.insert(id);
+                    // スーパーユーザーにはSuperUser権限も付与
+                    self.store
+                        .custom_permissions
+                        .entry(id)
+                        .or_insert_with(HashSet::new)
+                        .insert(Permission::SuperUser);
+                    info!("Loaded super user: {}", id);
+                } else {
+                    warn!("Invalid super user ID: {}", id_str);
+                }
+            }
+        }
+        debug!("Loaded {} super users", self.store.super_users.len());
+    }
+
     /// ファイルパスを生成
     fn get_file_path(base_dir: &str) -> PathBuf {
         Path::new(base_dir).join("permissions.json")
@@ -162,9 +194,10 @@ impl PermissionManager {
             })?;
 
         info!(
-            "Loaded permissions for {} users, {} admins",
+            "Loaded permissions for {} users, {} admins, {} super users",
             store.custom_permissions.len(),
-            store.admins.len()
+            store.admins.len(),
+            store.super_users.len()
         );
 
         Ok(Self { store })
@@ -205,6 +238,11 @@ impl PermissionManager {
         self.store.admins.contains(&user_id)
     }
 
+    /// ユーザーがスーパーユーザーかどうか
+    pub fn is_super_user(&self, user_id: u64) -> bool {
+        self.store.super_users.contains(&user_id)
+    }
+
     /// ユーザーの全パーミッションを取得
     pub fn get_permissions(&self, user_id: u64) -> HashSet<Permission> {
         let mut perms = default_permissions();
@@ -219,29 +257,99 @@ impl PermissionManager {
         perms
     }
 
-    /// ユーザーが特定のパーミッションを持っているか
-    pub fn has_permission(&self, user_id: u64, permission: &Permission) -> bool {
-        self.get_permissions(user_id).contains(permission)
+    /// ユーザーの全パーミッションを取得（ロールベース）
+    ///
+    /// 権限チェックフロー:
+    /// 1. SuperUser? → 全チェックバイパス
+    /// 2. 個別ユーザー権限? → 適用
+    /// 3. ロール権限? → 適用
+    /// 4. デフォルト権限 → 適用
+    pub fn get_permissions_with_roles(
+        &self,
+        user_id: u64,
+        role_ids: &[u64],
+        role_config: &crate::role_config::RoleConfig,
+    ) -> HashSet<Permission> {
+        // スーパーユーザーは全権限を持つ
+        if self.is_super_user(user_id) {
+            // 全ての権限を返す
+            let mut all_perms = HashSet::new();
+            all_perms.insert(Permission::FileRead);
+            all_perms.insert(Permission::FileWrite);
+            all_perms.insert(Permission::Schedule);
+            all_perms.insert(Permission::Admin);
+            all_perms.insert(Permission::SuperUser);
+            return all_perms;
+        }
+
+        let mut perms = HashSet::new();
+
+        // 1. デフォルト権限（ベース）
+        perms.extend(role_config.get_default_permissions());
+
+        // 2. ロール権限をマージ
+        perms.extend(role_config.get_permissions_for_roles(role_ids));
+
+        // 3. 個別ユーザー権限をマージ（最優先）
+        if let Some(custom) = self.store.custom_permissions.get(&user_id) {
+            for perm in custom {
+                perms.insert(perm.clone());
+            }
+        }
+
+        perms
     }
 
-    /// ユーザーにパーミッションを付与（管理者のみ）
+    /// ユーザーが特定のパーミッションを持っているか（ロールベース）
+    ///
+    /// SuperUser権限を持つユーザーは全ての権限を持っているとみなす
+    pub fn has_permission_with_roles(
+        &self,
+        user_id: u64,
+        permission: &Permission,
+        role_ids: &[u64],
+        role_config: &crate::role_config::RoleConfig,
+    ) -> bool {
+        let perms = self.get_permissions_with_roles(user_id, role_ids, role_config);
+        perms.contains(permission)
+    }
+
+    /// ユーザーが特定のパーミッションを持っているか
+    /// SuperUser権限を持つユーザーは全ての権限を持っているとみなす
+    pub fn has_permission(&self, user_id: u64, permission: &Permission) -> bool {
+        let perms = self.get_permissions(user_id);
+        // SuperUserは全ての権限を持つ
+        if perms.contains(&Permission::SuperUser) {
+            return true;
+        }
+        perms.contains(permission)
+    }
+
+    /// ユーザーにパーミッションを付与（管理者またはスーパーユーザーのみ）
     pub fn grant_permission(
         &mut self,
         admin_id: u64,
         target_user_id: u64,
         permission: Permission,
     ) -> Result<bool, PermissionError> {
-        // 管理者権限チェック
-        if !self.is_admin(admin_id) {
+        // 管理者またはスーパーユーザー権限チェック
+        if !self.is_admin(admin_id) && !self.is_super_user(admin_id) {
             return Err(PermissionError::PermissionDenied(
-                "Only admins can grant permissions".to_string(),
+                "Only admins or super users can grant permissions".to_string(),
             ));
         }
 
-        // Admin権限の付与は禁止（環境変数でのみ設定可能）
-        if permission == Permission::Admin {
+        // Admin権限の付与はスーパーユーザーのみ可能
+        if permission == Permission::Admin && !self.is_super_user(admin_id) {
             return Err(PermissionError::PermissionDenied(
-                "Admin permission can only be set via ADMIN_USER_IDS environment variable"
+                "Admin permission can only be granted by super users".to_string(),
+            ));
+        }
+
+        // SuperUser権限の付与は禁止
+        if permission == Permission::SuperUser {
+            return Err(PermissionError::PermissionDenied(
+                "SuperUser permission can only be set via SUPER_USER_IDS environment variable"
                     .to_string(),
             ));
         }
@@ -255,7 +363,7 @@ impl PermissionManager {
         let added = perms.insert(permission.clone());
         if added {
             info!(
-                "Granted {} to user {} by admin {}",
+                "Granted {} to user {} by admin/superuser {}",
                 permission, target_user_id, admin_id
             );
         }
@@ -263,24 +371,31 @@ impl PermissionManager {
         Ok(added)
     }
 
-    /// ユーザーからパーミッションを剥奪（管理者のみ）
+    /// ユーザーからパーミッションを剥奪（管理者またはスーパーユーザーのみ）
     pub fn revoke_permission(
         &mut self,
         admin_id: u64,
         target_user_id: u64,
         permission: Permission,
     ) -> Result<bool, PermissionError> {
-        // 管理者権限チェック
-        if !self.is_admin(admin_id) {
+        // 管理者またはスーパーユーザー権限チェック
+        if !self.is_admin(admin_id) && !self.is_super_user(admin_id) {
             return Err(PermissionError::PermissionDenied(
-                "Only admins can revoke permissions".to_string(),
+                "Only admins or super users can revoke permissions".to_string(),
             ));
         }
 
-        // Admin権限の剥奪は禁止
-        if permission == Permission::Admin {
+        // Admin権限の剥奪はスーパーユーザーのみ可能
+        if permission == Permission::Admin && !self.is_super_user(admin_id) {
             return Err(PermissionError::PermissionDenied(
-                "Admin permission can only be modified via ADMIN_USER_IDS environment variable"
+                "Admin permission can only be revoked by super users".to_string(),
+            ));
+        }
+
+        // SuperUser権限の剥奪は禁止
+        if permission == Permission::SuperUser {
+            return Err(PermissionError::PermissionDenied(
+                "SuperUser permission can only be modified via SUPER_USER_IDS environment variable"
                     .to_string(),
             ));
         }
@@ -289,7 +404,7 @@ impl PermissionManager {
             let removed = perms.remove(&permission);
             if removed {
                 info!(
-                    "Revoked {} from user {} by admin {}",
+                    "Revoked {} from user {} by admin/superuser {}",
                     permission, target_user_id, admin_id
                 );
             }

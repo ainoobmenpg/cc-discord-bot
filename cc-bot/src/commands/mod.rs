@@ -8,6 +8,7 @@ pub mod clear;
 pub mod memory_cmd;
 pub mod permission;
 pub mod schedule;
+pub mod settings;
 pub mod tools;
 
 use serenity::builder::CreateCommand;
@@ -22,6 +23,7 @@ pub fn register_commands() -> Vec<CreateCommand> {
         memory_cmd::register(),
         permission::register(),
         schedule::register(),
+        settings::register(),
         tools::register(),
     ]
 }
