@@ -1,0 +1,19 @@
+{
+  "servers": [
+    {
+      "name": "exa",
+      "command": "npx",
+      "args": ["-y", "exa-mcp-server"],
+      "env": {
+        "EXA_API_KEY": "${EXA_API_KEY}"
+      },
+      "enabled": false,
+      "description": "Exa AI-powered web search and code context"
+    }
+  ],
+  "settings": {
+    "connection_timeout": 30,
+    "tool_timeout": 60,
+    "max_concurrent": 5
+  }
+}

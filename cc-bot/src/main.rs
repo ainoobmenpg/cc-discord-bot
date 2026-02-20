@@ -425,6 +425,12 @@ async fn main() {
         let tm = glm_client.tool_manager();
         let mut tool_manager = tm.write().await;
         tools::register_memory_tools(&mut tool_manager, memory_store.clone());
+
+        // MCPツールを登録（設定ファイルがあれば）
+        if let Err(e) = tools::register_mcp_tools(&mut tool_manager, "../mcp.json").await {
+            warn!("Failed to register MCP tools: {}", e);
+        }
+
         info!("Registered {} tools total", tool_manager.list_tools().len());
     }
 

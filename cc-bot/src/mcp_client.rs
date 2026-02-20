@@ -188,13 +188,27 @@ impl MCPClient {
 
         debug!("Connecting to MCP server: {}", server_name);
 
+        // 環境変数を展開
+        let expanded_env: HashMap<String, String> = server.env.iter()
+            .map(|(k, v)| {
+                // ${VAR} 形式の環境変数を展開
+                let expanded = if v.starts_with("${") && v.ends_with("}") {
+                    let var_name = &v[2..v.len()-1];
+                    std::env::var(var_name).unwrap_or_else(|_| v.clone())
+                } else {
+                    v.clone()
+                };
+                (k.clone(), expanded)
+            })
+            .collect();
+
         // 子プロセスとしてサーバーを起動
         let transport = TokioChildProcess::new(
             Command::new(&server.command).configure(|cmd| {
                 for arg in &server.args {
                     cmd.arg(arg);
                 }
-                for (key, value) in &server.env {
+                for (key, value) in &expanded_env {
                     cmd.env(key, value);
                 }
             })
@@ -285,13 +299,27 @@ impl MCPClient {
 
         debug!("Executing tool {} on server {}", actual_tool_name, server_name);
 
+        // 環境変数を展開
+        let expanded_env: HashMap<String, String> = server.env.iter()
+            .map(|(k, v)| {
+                // ${VAR} 形式の環境変数を展開
+                let expanded = if v.starts_with("${") && v.ends_with("}") {
+                    let var_name = &v[2..v.len()-1];
+                    std::env::var(var_name).unwrap_or_else(|_| v.clone())
+                } else {
+                    v.clone()
+                };
+                (k.clone(), expanded)
+            })
+            .collect();
+
         // サーバーに接続
         let transport = TokioChildProcess::new(
             Command::new(&server.command).configure(|cmd| {
                 for arg in &server.args {
                     cmd.arg(arg);
                 }
-                for (key, value) in &server.env {
+                for (key, value) in &expanded_env {
                     cmd.env(key, value);
                 }
             })
