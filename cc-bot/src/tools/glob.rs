@@ -32,6 +32,12 @@ impl GlobTool {
         Ok(())
     }
 
+    /// ユーザー固有のパスに変換
+    fn get_user_path(path: &str, context: &ToolContext) -> String {
+        let output_dir = context.get_user_output_dir();
+        format!("{}/{}", output_dir, path)
+    }
+
     /// globパターンをマッチング
     fn matches_pattern(file_name: &str, pattern: &str) -> bool {
         // シンプルなglobマッチング実装
@@ -171,20 +177,22 @@ impl Tool for GlobTool {
         })
     }
 
-    async fn execute(&self, params: JsonValue, _context: &ToolContext) -> Result<ToolResult, ToolError> {
+    async fn execute(&self, params: JsonValue, context: &ToolContext) -> Result<ToolResult, ToolError> {
         let pattern = params["pattern"].as_str().ok_or_else(|| {
             ToolError::InvalidParams("Missing 'pattern' parameter".to_string())
         })?;
 
         let base_path = params["path"].as_str().unwrap_or(".");
 
-        debug!("Glob search: pattern='{}' in '{}'", pattern, base_path);
-
         // パスのバリデーション
         Self::validate_path(base_path)?;
 
+        // ユーザー固有のパスに変換
+        let user_path = Self::get_user_path(base_path, context);
+        debug!("Glob search: pattern='{}' in '{}'", pattern, user_path);
+
         // ベースディレクトリ存在確認
-        let base_path_obj = Path::new(base_path);
+        let base_path_obj = Path::new(&user_path);
         if !base_path_obj.exists() {
             return Err(ToolError::ExecutionFailed(format!(
                 "Directory not found: {}",

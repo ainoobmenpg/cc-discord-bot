@@ -31,6 +31,12 @@ impl EditTool {
 
         Ok(())
     }
+
+    /// ユーザー固有のパスに変換
+    fn get_user_path(path: &str, context: &ToolContext) -> String {
+        let output_dir = context.get_user_output_dir();
+        format!("{}/{}", output_dir, path)
+    }
 }
 
 #[async_trait]
@@ -68,7 +74,7 @@ impl Tool for EditTool {
         })
     }
 
-    async fn execute(&self, params: JsonValue, _context: &ToolContext) -> Result<ToolResult, ToolError> {
+    async fn execute(&self, params: JsonValue, context: &ToolContext) -> Result<ToolResult, ToolError> {
         let path = params["path"].as_str().ok_or_else(|| {
             ToolError::InvalidParams("Missing 'path' parameter".to_string())
         })?;
@@ -83,13 +89,15 @@ impl Tool for EditTool {
 
         let replace_all = params["replace_all"].as_bool().unwrap_or(false);
 
-        debug!("Editing file: {}, replace_all: {}", path, replace_all);
-
         // パスのバリデーション
         Self::validate_path(path)?;
 
+        // ユーザー固有のパスに変換
+        let user_path = Self::get_user_path(path, context);
+        debug!("Editing file: {}, replace_all: {}", user_path, replace_all);
+
         // ファイル存在確認
-        let path_obj = Path::new(path);
+        let path_obj = Path::new(&user_path);
         if !path_obj.exists() {
             return Err(ToolError::ExecutionFailed(format!(
                 "File not found: {}",
@@ -98,10 +106,10 @@ impl Tool for EditTool {
         }
 
         // ファイル読み込み
-        let content = match fs::read_to_string(path).await {
+        let content = match fs::read_to_string(&user_path).await {
             Ok(c) => c,
             Err(e) => {
-                warn!("Failed to read file {}: {}", path, e);
+                warn!("Failed to read file {}: {}", user_path, e);
                 return Err(ToolError::ExecutionFailed(format!(
                     "Failed to read file: {}",
                     e
@@ -143,16 +151,16 @@ impl Tool for EditTool {
         };
 
         // ファイル書き込み
-        match fs::write(path, &new_content).await {
+        match fs::write(&user_path, &new_content).await {
             Ok(_) => {
-                debug!("Successfully edited file: {}", path);
+                debug!("Successfully edited file: {}", user_path);
                 Ok(ToolResult::success(format!(
                     "Successfully edited file: {}",
                     path
                 )))
             }
             Err(e) => {
-                warn!("Failed to write file {}: {}", path, e);
+                warn!("Failed to write file {}: {}", user_path, e);
                 Err(ToolError::ExecutionFailed(format!(
                     "Failed to write file: {}",
                     e

@@ -33,6 +33,12 @@ impl GrepTool {
         Ok(())
     }
 
+    /// ユーザー固有のパスに変換
+    fn get_user_path(path: &str, context: &ToolContext) -> String {
+        let output_dir = context.get_user_output_dir();
+        format!("{}/{}", output_dir, path)
+    }
+
     /// ファイル内で正規表現検索
     async fn search_in_file(
         path: &str,
@@ -168,7 +174,7 @@ impl Tool for GrepTool {
         })
     }
 
-    async fn execute(&self, params: JsonValue, _context: &ToolContext) -> Result<ToolResult, ToolError> {
+    async fn execute(&self, params: JsonValue, context: &ToolContext) -> Result<ToolResult, ToolError> {
         let pattern_str = params["pattern"].as_str().ok_or_else(|| {
             ToolError::InvalidParams("Missing 'pattern' parameter".to_string())
         })?;
@@ -177,13 +183,15 @@ impl Tool for GrepTool {
         let file_pattern = params["file_pattern"].as_str();
         let case_insensitive = params["case_insensitive"].as_bool().unwrap_or(false);
 
-        debug!(
-            "Grep search: pattern='{}' in '{}' (case_insensitive={})",
-            pattern_str, base_path, case_insensitive
-        );
-
         // パスのバリデーション
         Self::validate_path(base_path)?;
+
+        // ユーザー固有のパスに変換
+        let user_path = Self::get_user_path(base_path, context);
+        debug!(
+            "Grep search: pattern='{}' in '{}' (case_insensitive={})",
+            pattern_str, user_path, case_insensitive
+        );
 
         // 正規表現コンパイル
         let pattern = if case_insensitive {
@@ -195,7 +203,7 @@ impl Tool for GrepTool {
             ToolError::InvalidParams(format!("Invalid regex pattern: {}", e))
         })?;
 
-        let base_path_obj = Path::new(base_path);
+        let base_path_obj = Path::new(&user_path);
 
         // ベースパス存在確認
         if !base_path_obj.exists() {
@@ -209,14 +217,14 @@ impl Tool for GrepTool {
 
         if base_path_obj.is_file() {
             // 単一ファイル検索
-            match Self::search_in_file(base_path, &pattern, case_insensitive).await {
+            match Self::search_in_file(&user_path, &pattern, case_insensitive).await {
                 Ok(file_matches) => {
                     for (line_num, line) in file_matches {
                         results.push((base_path.to_string(), line_num, line));
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to search file {}: {}", base_path, e);
+                    warn!("Failed to search file {}: {}", user_path, e);
                     return Err(ToolError::ExecutionFailed(format!(
                         "Failed to search file: {}",
                         e
