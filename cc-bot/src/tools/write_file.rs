@@ -13,6 +13,13 @@ impl WriteFileTool {
         Self
     }
 
+    /// パスがシンボリックリンクかチェック
+    fn is_symlink(path: &Path) -> bool {
+        path.symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    }
+
     /// パスのバリデーション（相対パスのみ許可）
     fn validate_path(path: &str) -> Result<(), ToolError> {
         // 絶対パスは禁止
@@ -26,6 +33,13 @@ impl WriteFileTool {
         if path.contains("..") {
             return Err(ToolError::PermissionDenied(
                 "Parent directory references are not allowed".to_string(),
+            ));
+        }
+
+        // シンボリックリンクを禁止（セキュリティ対策）
+        if Self::is_symlink(Path::new(path)) {
+            return Err(ToolError::PermissionDenied(
+                "Symbolic links are not allowed for security reasons".to_string(),
             ));
         }
 

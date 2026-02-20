@@ -20,8 +20,167 @@
 | v1.4.0 | メモリエクスポート | ✅ |
 | v1.5.0 | チャンネル毎設定 | ✅ |
 | v2.0.0 | ClaudeCode統合 | ✅ |
+| v2.1.0 | MCP接続プール | ✅ |
+| v2.2.0 | readability導入 | ✅ |
+| v2.3.0 | セキュリティ強化 | ✅ |
 
-> 📦 アーカイブ: [Plans-archive-2026-02-20.md](.claude/memory/archive/Plans-archive-2026-02-20.md)
+---
+
+## v2.2.0 - Web取得/検索改善 🚧
+
+### 概要
+
+web_fetchツールの出力品質を改善し、検索ツールを追加して「調べて」系のリクエストに適切に対応できるようにする。
+
+### 背景
+
+**現状の問題**:
+- web_fetchの出力が読みにくい（HTMLタグ、alt text、重複情報）
+- ナビゲーションやメタデータも含まれてしまう
+- 「検索して」に対して検索ツールではなく直接fetchを選択してしまう
+
+### 優先度マトリックス
+
+| 機能 | 優先度 | 工数 | 備考 |
+|------|--------|------|------|
+| readability導入 | Required | 0.5d | 本文抽出 ✅ |
+| web_fetch改善 | Optional | 0.5d | 不要要素削除、フォーマット改善 |
+
+**合計工数（目安）**: 1日
+
+---
+
+### Phase 1: readability導入 ✅ Required
+
+- [x] ライブラリ選定・導入
+- [x] 本文抽出機能の実装
+- [x] テスト追加
+
+#### ライブラリ候補
+
+| ライブラリ | バージョン | 特徴 | 推奨 |
+|-----------|-----------|------|------|
+| `legible` | 0.4.1 | Mozilla Readability移植、最新 | ⭐ |
+| `readability-rust` | 0.1.0 | Mozilla移植、18K+DL | |
+| `readabilityrs` | 0.1.2 | Mozilla移植、93.8%テスト通過 | |
+
+**推奨**: `legible` (最新、Rust 2024対応、APIシンプル)
+
+#### 実装内容
+
+```rust
+// web_fetch.rs に追加
+use legible::{parse, is_probably_readerable};
+
+// fetch()内で本文抽出
+if is_probably_readerable(&body, None) {
+    match parse(&body, Some(&url), None) {
+        Ok(article) => {
+            // article.title, article.content, article.text_content を使用
+        }
+        Err(_) => // フォールバック: 従来の正規表現処理
+    }
+}
+```
+
+---
+
+### Phase 2: web_fetch改善 ✅ Required
+
+- [ ] imgタグ処理改善（alt textを適切に扱う）
+- [ ] リンクプレビュー/OGP除外
+- [ ] 出力フォーマット最適化
+- [ ] テスト追加
+
+#### 改善内容
+
+1. **本文抽出後の処理**
+   - 見出し構造を維持
+   - リストを適切にMarkdown化
+   - コードブロックの保持
+
+2. **メタデータ処理**
+   - タイトルを最初に表示
+   - URL、更新日時を簡潔に表示
+   - OGP画像は除外
+
+3. **出力形式**
+   ```markdown
+   # 記事タイトル
+
+   > URL: https://example.com/article
+   > 取得日時: 2026-02-20
+
+   本文内容...
+   ```
+
+---
+
+## v2.3.0 - セキュリティ強化 ✅ [feature:security]
+
+### 概要
+
+複数サーバー導入に向けたセキュリティ強化。APIキー認証とシンボリックリンク対策を実装。
+
+### 優先度マトリックス
+
+| 機能 | 優先度 | 工数 |
+|------|--------|------|
+| APIキー必須化 | Required | 0.5h ✅ |
+| シンボリックリンク検出 | Required | 1h ✅ |
+| CORS設定強化 | Recommended | 0.5h ✅ |
+
+**合計工数**: 2時間
+
+---
+
+### Phase 1: APIキー必須化 ✅ Required
+
+- [x] APIキー未設定時の起動ブロック
+- [x] 環境変数チェックの強化
+- [x] エラーメッセージの改善
+
+---
+
+### Phase 2: シンボリックリンク検出 ✅ Required
+
+- [x] 全ファイル操作ツールにsymlinkチェック追加
+- [x] validation.rsの機能をツールに統合
+- [x] テスト追加
+
+#### 対象ファイル
+
+- `src/tools/read_file.rs`
+- `src/tools/write_file.rs`
+- `src/tools/edit.rs`
+- `src/tools/list_files.rs`
+
+---
+
+### Phase 3: CORS設定強化 ✅ Recommended
+
+- [x] デフォルトCORSの無効化
+- [x] ALLOWED_ORIGINS必須化（本番環境）
+- [x] 設定ドキュメント追加
+
+---
+
+## 完了済みバージョン
+
+### v2.1.0 - MCP接続プール ✅
+
+- [x] MCPConnectionPool実装
+- [x] 接続再利用によるパフォーマンス改善
+- [x] アイドル接続の自動クリーンアップ
+
+---
+
+## 将来機能（Backlog）
+
+- v2.3.0: ブラウザ自動化（headless-chrome）
+- v2.4.0: Skills System（YAML定義）
+- v3.0.0: マルチサーバー対応
+- v3.1.0: Web UI（ダッシュボード）
 
 ---
 
@@ -61,126 +220,4 @@ API_KEY=your-api-key
 
 ---
 
-**テスト数**: 276
-
----
-
-## v1.4.0 - メモリエクスポート（Markdown/JSON） ✅
-
-- [x] メモリをMarkdown形式でエクスポート
-- [x] メモリをJSON形式でエクスポート
-- [x] `/memory export` コマンド追加
-
----
-
-## v1.5.0 - チャンネル毎設定 ✅
-
-- [x] チャンネルごとのワーキングディレクトリ設定
-- [x] チャンネルごとの権限設定
-- [x] `/settings channel` コマンド追加
-
----
-
-## v2.0.0 - ClaudeCode統合 ✅ [feature:claude-integration]
-
-### 概要
-
-Discord経由でClaudeCode相当の機能を提供。
-**GLM-4.7ベース**で実装し、抽象化レイヤー経由で将来的にClaude APIにも対応可能。
-
-### アーキテクチャ
-
-```
-Discord Bot (cc-discord-bot)
-    ↓ LLM抽象化レイヤー (LLMClient trait)
-GLM-4.7 (現在) / Claude (将来対応)
-    ↓ Tool Calls
-ツール群 (Read/Write/Edit/Glob/Grep/Bash)
-    ↓ MCP Protocol
-MCP Servers (Skills/Plugins)
-```
-
-### 優先度マトリックス
-
-| 機能 | 優先度 | 工数 | 備考 |
-|------|--------|------|------|
-| LLM抽象化レイヤー | Required | 2d | GLM実装、Claude対応準備 |
-| Editツール | Required | 1d | 部分編集必須 |
-| Globツール | Required | 0.5d | ファイル検索 |
-| Grepツール | Required | 0.5d | 内容検索 |
-| Bashツール | Required | 2d | クロスプラットフォーム |
-| MCP統合 | Required | 5d | rmcp/mcprクレート使用 |
-| チャンクストリーミング | Recommended | 2d | SSE実装 |
-| Skills実行エンジン | Required | 3d | MCPツール連携 |
-
-**合計工数（目安）**: 16日
-
-### Phase 1: LLM抽象化レイヤー ✅
-
-- [x] `src/llm.rs` - `LLMClient` trait定義
-- [x] `src/llm/glm.rs` - GLM実装（既存glm.rsから移行）
-- [x] `src/llm/mod.rs` - モジュール統合
-- [x] main.rsでLLMClient経由で使用するよう修正
-- [x] テスト: モックLLMClientでツール動作確認
-
-### Phase 2: ツール拡張 ✅
-
-- [x] `src/tools/edit.rs` - Editツール（部分編集）
-- [x] `src/tools/glob.rs` - Globツール（ファイル検索）
-- [x] `src/tools/grep.rs` - Grepツール（内容検索）
-- [x] `src/tools/bash.rs` - Bashツール（クロスプラットフォーム）
-- [x] Windows対応（PowerShell/batファイル実行）
-
-### Phase 3: MCP統合 ✅
-
-- [x] `Cargo.toml` に `rmcp` または `mcpr` クレート追加
-- [x] `src/mcp_client.rs` - MCPクライアント実装
-- [x] MCPサーバー設定ファイル（`mcp-servers.json`）
-- [x] 動的ツールロード（MCP tools）
-- [x] Skills実行エンジン
-
-### Phase 4: UX改善 ✅
-
-- [x] チャンクストリーミング表示（Discordメッセージ更新）
-- [x] ツール実行の進捗表示
-- [x] メッセージ監視モード（`/ask` なしで反応）
-- [x] ツール実行のユーザー確認（権限設定連動）
-
-### 環境変数（追加）
-
-```bash
-# LLMプロバイダー（現在はGLMのみ、将来Claude対応）
-LLM_PROVIDER=glm              # glm | claude（将来）
-# GLM設定（現状維持）
-GLM_API_KEY=xxx
-GLM_MODEL=glm-4.7
-# Claude設定（将来用、オプション）
-# ANTHROPIC_API_KEY=xxx
-# CLAUDE_MODEL=claude-sonnet-4-6
-# MCP設定
-MCP_SERVERS=path/to/servers.json
-```
-
-### TDD戦略
-
-| フェーズ | テスト観点 | カバレッジ目標 |
-|---------|-----------|---------------|
-| Phase 1 | LLM trait、GLM実装 | 80% |
-| Phase 2 | 各ツールの単体テスト | 85% |
-| Phase 3 | MCPプロトコルテスト | 75% |
-| Phase 4 | 統合テスト | 70% |
-
-### 将来のClaude対応
-
-抽象化レイヤー導入後、Claude対応は以下の手順で追加可能：
-
-1. `src/llm/claude.rs` を作成
-2. `LLMClient` traitを実装
-3. `LLM_PROVIDER=claude` で切り替え
-
----
-
-## 将来機能（Backlog）
-
-- v2.1.0: マルチサーバー対応
-- v2.2.0: Web UI（ダッシュボード）
+**テスト数**: 293

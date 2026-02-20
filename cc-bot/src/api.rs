@@ -19,10 +19,16 @@ async fn auth_middleware(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
-    // API_KEYが設定されていない場合はスキップ
+    // API_KEYは必須（複数サーバー導入時のセキュリティ確保）
     let expected_api_key = std::env::var("API_KEY").unwrap_or_default();
     if expected_api_key.is_empty() {
-        return Ok(next.run(request).await);
+        error!("API_KEY environment variable is not set - authentication is required");
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Server configuration error: API_KEY not set".to_string(),
+            }),
+        ));
     }
 
     // Authorization headerをチェック
@@ -181,8 +187,13 @@ struct ErrorResponse {
 /// APIルーターを作成
 pub fn create_router(state: ApiState) -> Router {
     // CORS設定 - 環境変数から許可するオリジンを取得
+    // 本番環境ではALLOWED_ORIGINSの設定が必須
     let allowed_origins = std::env::var("ALLOWED_ORIGINS")
-        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+        .expect("ALLOWED_ORIGINS environment variable must be set for security. Example: ALLOWED_ORIGINS=https://example.com,https://app.example.com");
+
+    if allowed_origins.trim().is_empty() {
+        panic!("ALLOWED_ORIGINS cannot be empty. Please specify at least one allowed origin.");
+    }
 
     let cors = CorsLayer::new()
         .allow_origin(
