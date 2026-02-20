@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "collector"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "io-util"] }
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -20,6 +20,10 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
+regex = "1"
+# MCP Protocol support
+rmcp = { version = "0.16", features = ["client", "transport-child-process"] }
+anyhow = "1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -439,6 +439,102 @@ impl MemoryStore {
 
         Ok(count as usize)
     }
+
+    /// ユーザーの全メモリを取得（エクスポート用）
+    pub fn get_all_memories(&self, user_id: u64) -> Result<Vec<Memory>, MemoryError> {
+        let conn = self.lock_conn()?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, user_id, content, category, tags, metadata, created_at, updated_at
+                 FROM memories
+                 WHERE user_id = ?1
+                 ORDER BY created_at DESC",
+            )
+            .map_err(|e| MemoryError::DatabaseError(format!("Failed to prepare statement: {}", e)))?;
+
+        let memories = stmt
+            .query_map(params![user_id as i64], |row| {
+                Ok(Memory {
+                    id: row.get(0)?,
+                    user_id: row.get::<_, i64>(1)? as u64,
+                    content: row.get(2)?,
+                    category: row.get(3)?,
+                    tags: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
+                    metadata: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
+                    created_at: parse_rfc3339_or_now(&row.get::<_, String>(6)?),
+                    updated_at: parse_rfc3339_or_now(&row.get::<_, String>(7)?),
+                })
+            })
+            .map_err(|e| MemoryError::DatabaseError(format!("Failed to query memories: {}", e)))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| MemoryError::DatabaseError(format!("Failed to collect memories: {}", e)))?;
+
+        Ok(memories)
+    }
+
+    /// メモリをMarkdown形式でエクスポート
+    pub fn export_to_markdown(&self, user_id: u64) -> Result<String, MemoryError> {
+        let memories = self.get_all_memories(user_id)?;
+
+        let mut output = String::new();
+        output.push_str("# Memory Export\n\n");
+        output.push_str(&format!("**User ID:** {}\n", user_id));
+        output.push_str(&format!("**Export Date:** {}\n", Utc::now().format("%Y-%m-%d %H:%M:%S UTC")));
+        output.push_str(&format!("**Total Memories:** {}\n\n", memories.len()));
+        output.push_str("---\n\n");
+
+        if memories.is_empty() {
+            output.push_str("*No memories found.*\n");
+        } else {
+            for memory in &memories {
+                output.push_str(&format!("## Memory #{}\n\n", memory.id));
+                output.push_str(&format!("**Category:** {}\n\n", memory.category));
+
+                if !memory.tags.is_empty() {
+                    output.push_str(&format!("**Tags:** {}\n\n", memory.tags.join(", ")));
+                }
+
+                if !memory.metadata.is_empty() {
+                    output.push_str("**Metadata:**\n");
+                    for (key, value) in &memory.metadata {
+                        output.push_str(&format!("- {}: {}\n", key, value));
+                    }
+                    output.push('\n');
+                }
+
+                output.push_str(&format!("**Content:**\n{}\n\n", memory.content));
+                output.push_str(&format!("**Created:** {}\n", memory.created_at.format("%Y-%m-%d %H:%M:%S UTC")));
+                output.push_str(&format!("**Updated:** {}\n", memory.updated_at.format("%Y-%m-%d %H:%M:%S UTC")));
+                output.push_str("\n---\n\n");
+            }
+        }
+
+        Ok(output)
+    }
+
+    /// メモリをJSON形式でエクスポート
+    pub fn export_to_json(&self, user_id: u64) -> Result<String, MemoryError> {
+        let memories = self.get_all_memories(user_id)?;
+
+        #[derive(Serialize)]
+        struct ExportData {
+            user_id: u64,
+            export_date: String,
+            total_memories: usize,
+            memories: Vec<Memory>,
+        }
+
+        let export_data = ExportData {
+            user_id,
+            export_date: Utc::now().to_rfc3339(),
+            total_memories: memories.len(),
+            memories,
+        };
+
+        serde_json::to_string_pretty(&export_data)
+            .map_err(|e| MemoryError::DatabaseError(format!("Failed to serialize JSON: {}", e)))
+    }
 }
 
 impl Default for MemoryStore {
@@ -764,5 +860,124 @@ mod tests {
         // オフセットが総数を超える場合は空
         let page3 = store.list_memories_with_offset(12345, 3, 6).unwrap();
         assert!(page3.is_empty(), "Offset beyond total should return empty");
+    }
+
+    #[test]
+    fn test_export_to_markdown() {
+        let store = MemoryStore::new().unwrap();
+
+        // テストデータを追加
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "Test memory 1".to_string(),
+                category: Some("work".to_string()),
+                tags: Some(vec!["important".to_string()]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "Test memory 2".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // Markdownエクスポート
+        let result = store.export_to_markdown(12345).unwrap();
+
+        // 結果を検証
+        assert!(result.contains("# Memory Export"));
+        assert!(result.contains("**User ID:** 12345"));
+        assert!(result.contains("**Total Memories:** 2"));
+        assert!(result.contains("Test memory 1"));
+        assert!(result.contains("Test memory 2"));
+        assert!(result.contains("**Category:** work"));
+        assert!(result.contains("**Tags:** important"));
+    }
+
+    #[test]
+    fn test_export_to_markdown_empty() {
+        let store = MemoryStore::new().unwrap();
+
+        // メモリがない状態でエクスポート
+        let result = store.export_to_markdown(99999).unwrap();
+
+        assert!(result.contains("# Memory Export"));
+        assert!(result.contains("**Total Memories:** 0"));
+        assert!(result.contains("*No memories found.*"));
+    }
+
+    #[test]
+    fn test_export_to_json() {
+        let store = MemoryStore::new().unwrap();
+
+        // テストデータを追加
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "JSON test memory".to_string(),
+                category: Some("test".to_string()),
+                tags: Some(vec!["json".to_string(), "export".to_string()]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // JSONエクスポート
+        let result = store.export_to_json(12345).unwrap();
+
+        // JSONとしてパースできることを確認
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["user_id"], 12345);
+        assert_eq!(parsed["total_memories"], 1);
+        assert!(parsed["memories"].is_array());
+        assert_eq!(parsed["memories"][0]["content"], "JSON test memory");
+        assert_eq!(parsed["memories"][0]["category"], "test");
+    }
+
+    #[test]
+    fn test_export_to_json_empty() {
+        let store = MemoryStore::new().unwrap();
+
+        // メモリがない状態でエクスポート
+        let result = store.export_to_json(99999).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["user_id"], 99999);
+        assert_eq!(parsed["total_memories"], 0);
+        assert!(parsed["memories"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_get_all_memories() {
+        let store = MemoryStore::new().unwrap();
+
+        // 複数ユーザーのデータを追加
+        store
+            .add_memory(NewMemory {
+                user_id: 12345,
+                content: "User 12345 memory".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store
+            .add_memory(NewMemory {
+                user_id: 67890,
+                content: "User 67890 memory".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // ユーザーごとに正しく取得できるか確認
+        let memories_12345 = store.get_all_memories(12345).unwrap();
+        assert_eq!(memories_12345.len(), 1);
+        assert_eq!(memories_12345[0].content, "User 12345 memory");
+
+        let memories_67890 = store.get_all_memories(67890).unwrap();
+        assert_eq!(memories_67890.len(), 1);
+        assert_eq!(memories_67890[0].content, "User 67890 memory");
     }
 }

@@ -1,4 +1,4 @@
-//! /settings - ユーザー設定Slash Command
+//! /settings - ユーザー設定・チャンネル設定Slash Command
 
 use crate::Handler;
 use serenity::builder::{CreateCommand, CreateCommandOption};
@@ -9,16 +9,31 @@ use tracing::error;
 /// /settings コマンドの定義
 pub fn register() -> CreateCommand {
     CreateCommand::new("settings")
-        .description("ユーザー設定")
+        .description("ユーザー設定・チャンネル設定")
+        // ユーザー設定
         .add_option(
-            CreateCommandOption::new(CommandOptionType::SubCommand, "output", "出力先設定")
+            CreateCommandOption::new(CommandOptionType::SubCommand, "output", "出力先設定（ユーザー）")
                 .add_sub_option(
                     CreateCommandOption::new(CommandOptionType::String, "path", "出力先サブディレクトリ")
                         .required(true)
                 )
         )
         .add_option(
-            CreateCommandOption::new(CommandOptionType::SubCommand, "show", "現在の設定表示")
+            CreateCommandOption::new(CommandOptionType::SubCommand, "show", "現在の設定表示（ユーザー）")
+        )
+        // チャンネル設定
+        .add_option(
+            CreateCommandOption::new(CommandOptionType::SubCommandGroup, "channel", "チャンネル設定")
+                .add_sub_option(
+                    CreateCommandOption::new(CommandOptionType::SubCommand, "output", "チャンネルのワーキングディレクトリ設定")
+                        .add_sub_option(
+                            CreateCommandOption::new(CommandOptionType::String, "path", "ワーキングディレクトリパス")
+                                .required(true)
+                        )
+                )
+                .add_sub_option(
+                    CreateCommandOption::new(CommandOptionType::SubCommand, "show", "現在のチャンネル設定表示")
+                )
         )
 }
 
@@ -34,11 +49,140 @@ pub async fn run(
         None => return "サブコマンドを指定してください。".to_string(),
     };
 
+    // サブコマンドグループかどうかを判定
     match subcommand.name.as_str() {
+        "channel" => handle_channel_group(command, handler, subcommand).await,
         "output" => handle_output(command, handler, subcommand).await,
         "show" => handle_show(command, handler).await,
         _ => "不明なサブコマンドです。".to_string(),
     }
+}
+
+/// /settings channel グループの処理
+async fn handle_channel_group(
+    command: &CommandInteraction,
+    handler: &Handler,
+    group: &serenity::model::application::CommandDataOption,
+) -> String {
+    // チャンネルIDを取得
+    let channel_id = command.channel_id.get();
+
+    // サブコマンドを取得
+    let sub_options = match &group.value {
+        CommandDataOptionValue::SubCommandGroup(options) => options,
+        _ => return "サブコマンドグループの値を取得できませんでした。".to_string(),
+    };
+
+    let subcommand = match sub_options.first() {
+        Some(opt) => opt,
+        None => return "サブコマンドを指定してください。".to_string(),
+    };
+
+    match subcommand.name.as_str() {
+        "output" => handle_channel_output(command, handler, subcommand, channel_id).await,
+        "show" => handle_channel_show(command, handler, channel_id).await,
+        _ => "不明なチャンネル設定サブコマンドです。".to_string(),
+    }
+}
+
+/// /settings channel output の処理
+async fn handle_channel_output(
+    _command: &CommandInteraction,
+    handler: &Handler,
+    subcommand: &serenity::model::application::CommandDataOption,
+    channel_id: u64,
+) -> String {
+    // サブコマンドの値を取得
+    let sub_options = match &subcommand.value {
+        CommandDataOptionValue::SubCommand(options) => options,
+        _ => return "サブコマンドの値を取得できませんでした。".to_string(),
+    };
+
+    // path オプションを取得
+    let path = match sub_options
+        .iter()
+        .find(|opt| opt.name == "path")
+        .and_then(|opt| {
+            if let CommandDataOptionValue::String(s) = &opt.value {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        }) {
+        Some(p) => p,
+        None => return "ワーキングディレクトリパスを指定してください。".to_string(),
+    };
+
+    // パスの検証
+    if path.is_empty() || path.len() > 4096 {
+        return "パスは1文字以上4096文字以内で指定してください。".to_string();
+    }
+    if path.contains("..") || path.starts_with('/') || path.starts_with('~') {
+        return "無効なパスです。相対パス（..）や絶対パス（/, ~）は使用できません。".to_string();
+    }
+    if path.contains('\\') {
+        return "無効なパスです。バックスラッシュは使用できません。".to_string();
+    }
+    if path.contains('\0') {
+        return "無効なパスです。Nullバイトを含むパスは使用できません。".to_string();
+    }
+
+    // チャンネル設定を保存
+    let channel_settings_store = match handler.channel_settings_store.as_ref() {
+        Some(store) => store,
+        None => return "チャンネル設定ストアが初期化されていません。".to_string(),
+    };
+
+    if let Err(e) = channel_settings_store.set_setting(channel_id, "output_dir", path) {
+        error!("Failed to save channel output_dir setting: {}", e);
+        return format!("チャンネル設定の保存に失敗しました: {}", e);
+    }
+
+    format!("<#{}> のワーキングディレクトリを `{}` に設定しました。", channel_id, path)
+}
+
+/// /settings channel show の処理
+async fn handle_channel_show(
+    _command: &CommandInteraction,
+    handler: &Handler,
+    channel_id: u64,
+) -> String {
+    // チャンネル設定ストアを取得
+    let channel_settings_store = match handler.channel_settings_store.as_ref() {
+        Some(store) => store,
+        None => return "チャンネル設定ストアが初期化されていません。".to_string(),
+    };
+
+    // チャンネル設定を取得
+    let settings = match channel_settings_store.get_channel_settings(channel_id) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to get channel settings: {}", e);
+            return format!("チャンネル設定の取得に失敗しました: {}", e);
+        }
+    };
+
+    let mut lines = vec![format!("**<#{}> のチャンネル設定**", channel_id)];
+
+    // 出力先
+    match settings.output_dir {
+        Some(ref dir) => lines.push(format!("- ワーキングディレクトリ: `{}`", dir)),
+        None => lines.push("- ワーキングディレクトリ: （デフォルト）".to_string()),
+    }
+
+    // 許可ロール
+    match settings.allowed_roles {
+        Some(ref roles) => lines.push(format!("- 許可ロール: `{}`", roles)),
+        None => lines.push("- 許可ロール: （全員）".to_string()),
+    }
+
+    // 最大履歴数
+    match settings.max_history {
+        Some(ref max) => lines.push(format!("- 最大履歴数: `{}`", max)),
+        None => lines.push("- 最大履歴数: （デフォルト）".to_string()),
+    }
+
+    lines.join("\n")
 }
 
 /// /settings output の処理
@@ -71,16 +215,6 @@ async fn handle_output(
     };
 
     // パスの検証
-    if path.is_empty() {
-        return "パスを空にすることはできません。".to_string();
-    }
-
-    // 危険なパスをチェック（パストラバーサル対策）
-    // - 相対パストラバーサル（..）
-    // - Unix絶対パス（/, ~）
-    // - Windows絶対パスやバックスラッシュ（\）
-    // - Nullバイト（\0）
-    // - パス長の上限（4096文字）
     if path.is_empty() || path.len() > 4096 {
         return "パスは1文字以上4096文字以内で指定してください。".to_string();
     }

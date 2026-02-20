@@ -72,7 +72,7 @@ fn validate_message(message: &str) -> Result<(), String> {
     Ok(())
 }
 
-use crate::glm::GLMClient;
+use crate::llm::LLMClient;
 use crate::history::ChatMessage;
 use crate::memory_store::MemoryStore;
 use crate::scheduler::Scheduler;
@@ -83,7 +83,7 @@ use crate::tool::ToolContext;
 /// APIサーバーの共有状態
 #[derive(Clone)]
 pub struct ApiState {
-    pub glm_client: GLMClient,
+    pub glm_client: Arc<dyn LLMClient>,
     /// 将来的にセッション履歴APIで使用予定
     #[allow(dead_code)]
     pub session_manager: Arc<Mutex<SessionManager>>,

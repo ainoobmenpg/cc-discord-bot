@@ -17,6 +17,9 @@
 | v1.1.0 | ユーザー毎設定管理 | ✅ |
 | v1.2.0 | 個人メモリ強化 | ✅ |
 | v1.3.0 | コード品質改善 | ✅ |
+| v1.4.0 | メモリエクスポート | ✅ |
+| v1.5.0 | チャンネル毎設定 | ✅ |
+| v2.0.0 | ClaudeCode統合 | ✅ |
 
 > 📦 アーカイブ: [Plans-archive-2026-02-20.md](.claude/memory/archive/Plans-archive-2026-02-20.md)
 
@@ -58,139 +61,126 @@ API_KEY=your-api-key
 
 ---
 
-**テスト数**: 188
+**テスト数**: 276
 
 ---
 
-## v1.0.0 - 権限システム再設計 ✅ [feature:security]
+## v1.4.0 - メモリエクスポート（Markdown/JSON） ✅
+
+- [x] メモリをMarkdown形式でエクスポート
+- [x] メモリをJSON形式でエクスポート
+- [x] `/memory export` コマンド追加
+
+---
+
+## v1.5.0 - チャンネル毎設定 ✅
+
+- [x] チャンネルごとのワーキングディレクトリ設定
+- [x] チャンネルごとの権限設定
+- [x] `/settings channel` コマンド追加
+
+---
+
+## v2.0.0 - ClaudeCode統合 ✅ [feature:claude-integration]
 
 ### 概要
 
-SuperUser権限追加、ロール連携、コマンドベース権限管理を統合。
+Discord経由でClaudeCode相当の機能を提供。
+**GLM-4.7ベース**で実装し、抽象化レイヤー経由で将来的にClaude APIにも対応可能。
 
-### 権限チェックフロー
-
-```
-1. SuperUser? → 全チェックバイパス
-2. 個別ユーザー権限? → 適用
-3. ロール権限? → 適用
-4. デフォルト権限 → 適用
-```
-
-### 設定ファイル形式（data/roles.json）
-
-```json
-{
-  "roles": {
-    "Admin": ["Admin", "FileRead", "FileWrite", "Schedule"],
-    "Trusted": ["FileRead", "FileWrite", "Schedule"],
-    "Member": ["FileRead"]
-  },
-  "default_permissions": ["FileRead"]
-}
-```
-
-### タスク
-
-- [x] `Permission::SuperUser` 追加
-- [x] `SUPER_USER_IDS` 環境変数読み込み
-- [x] SuperUser時の全制限バイパス実装
-- [x] `src/role_config.rs` - ロール設定ファイル読み込み
-- [x] `RoleConfig` struct実装（Serde deserialize）
-- [x] `PermissionManager`にロールベース権限チェック追加
-- [x] Discord Guild APIからユーザーロール取得
-- [x] `/permission roles` - ロール-権限マッピング表示
-- [x] `/permission sync` - ロールと権限を同期
-- [x] `/permission grant @user <perm>` - 個別権限付与
-- [x] `/permission revoke @user <perm>` - 個別権限剥奪
-
----
-
-## v1.1.0 - ユーザー毎設定管理 ✅
-
-### 出力先パス
+### アーキテクチャ
 
 ```
-{BASE_OUTPUT_DIR}/{user_id}/           # デフォルト
-{BASE_OUTPUT_DIR}/{custom_subdir}/     # カスタム設定時
+Discord Bot (cc-discord-bot)
+    ↓ LLM抽象化レイヤー (LLMClient trait)
+GLM-4.7 (現在) / Claude (将来対応)
+    ↓ Tool Calls
+ツール群 (Read/Write/Edit/Glob/Grep/Bash)
+    ↓ MCP Protocol
+MCP Servers (Skills/Plugins)
 ```
 
-### タスク
+### 優先度マトリックス
 
-- [x] `src/user_settings.rs` - ユーザー設定ストア
-- [x] `UserSettings` struct実装
-- [x] `ToolContext`に出力先パス生成ロジック追加
-- [x] `/settings output` - 出力先設定コマンド
-- [x] `/settings show` - 現在の設定表示
+| 機能 | 優先度 | 工数 | 備考 |
+|------|--------|------|------|
+| LLM抽象化レイヤー | Required | 2d | GLM実装、Claude対応準備 |
+| Editツール | Required | 1d | 部分編集必須 |
+| Globツール | Required | 0.5d | ファイル検索 |
+| Grepツール | Required | 0.5d | 内容検索 |
+| Bashツール | Required | 2d | クロスプラットフォーム |
+| MCP統合 | Required | 5d | rmcp/mcprクレート使用 |
+| チャンクストリーミング | Recommended | 2d | SSE実装 |
+| Skills実行エンジン | Required | 3d | MCPツール連携 |
 
----
+**合計工数（目安）**: 16日
 
-## v1.2.0 - 個人メモリ強化 ✅
+### Phase 1: LLM抽象化レイヤー ✅
 
-### 拡張メモリスキーマ
+- [x] `src/llm.rs` - `LLMClient` trait定義
+- [x] `src/llm/glm.rs` - GLM実装（既存glm.rsから移行）
+- [x] `src/llm/mod.rs` - モジュール統合
+- [x] main.rsでLLMClient経由で使用するよう修正
+- [x] テスト: モックLLMClientでツール動作確認
 
-```sql
-ALTER TABLE memories ADD COLUMN category TEXT DEFAULT 'general';
-ALTER TABLE memories ADD COLUMN tags TEXT DEFAULT '[]';
-ALTER TABLE memories ADD COLUMN metadata TEXT DEFAULT '{}';
+### Phase 2: ツール拡張 ✅
+
+- [x] `src/tools/edit.rs` - Editツール（部分編集）
+- [x] `src/tools/glob.rs` - Globツール（ファイル検索）
+- [x] `src/tools/grep.rs` - Grepツール（内容検索）
+- [x] `src/tools/bash.rs` - Bashツール（クロスプラットフォーム）
+- [x] Windows対応（PowerShell/batファイル実行）
+
+### Phase 3: MCP統合 ✅
+
+- [x] `Cargo.toml` に `rmcp` または `mcpr` クレート追加
+- [x] `src/mcp_client.rs` - MCPクライアント実装
+- [x] MCPサーバー設定ファイル（`mcp-servers.json`）
+- [x] 動的ツールロード（MCP tools）
+- [x] Skills実行エンジン
+
+### Phase 4: UX改善 ✅
+
+- [x] チャンクストリーミング表示（Discordメッセージ更新）
+- [x] ツール実行の進捗表示
+- [x] メッセージ監視モード（`/ask` なしで反応）
+- [x] ツール実行のユーザー確認（権限設定連動）
+
+### 環境変数（追加）
+
+```bash
+# LLMプロバイダー（現在はGLMのみ、将来Claude対応）
+LLM_PROVIDER=glm              # glm | claude（将来）
+# GLM設定（現状維持）
+GLM_API_KEY=xxx
+GLM_MODEL=glm-4.7
+# Claude設定（将来用、オプション）
+# ANTHROPIC_API_KEY=xxx
+# CLAUDE_MODEL=claude-sonnet-4-6
+# MCP設定
+MCP_SERVERS=path/to/servers.json
 ```
 
-### タスク
+### TDD戦略
 
-- [x] `Memory` structに`category`, `tags`, `metadata`追加
-- [x] マイグレーションロジック（既存DB互換）
-- [x] `/memory add --category` - カテゴリ付きメモリ追加
-- [x] `/memory add --tag` - タグ付きメモリ追加
-- [x] `/memory list --category` - カテゴリでフィルタ
-- [x] `/memory search` - 全文検索（LIKE実装）
+| フェーズ | テスト観点 | カバレッジ目標 |
+|---------|-----------|---------------|
+| Phase 1 | LLM trait、GLM実装 | 80% |
+| Phase 2 | 各ツールの単体テスト | 85% |
+| Phase 3 | MCPプロトコルテスト | 75% |
+| Phase 4 | 統合テスト | 70% |
 
----
+### 将来のClaude対応
 
----
+抽象化レイヤー導入後、Claude対応は以下の手順で追加可能：
 
-## v1.3.0 - コード品質改善（レビュー指摘対応） ✅
-
-### Critical（5件）
-
-- [x] `[memory_store.rs]` LIKE検索の特殊文字（%_, エスケープ処理追加
-- [x] `[user_settings.rs]` N+1クエリ修正（save_user_settingsをトランザクション化）
-- [x] `[user_settings.rs/memory_store.rs]` 同期Mutex→tokio::sync::Mutex変更
-- [x] `[user_roles.rs]` Serenity依存関数のテスト追加（モック化）
-- [x] `[role_config.rs]` 不正JSON読み込みエラーテスト追加
-
-### Major（14件）
-
-- [x] `[settings.rs]` パストラバーサル対策強化（\\, \0チェック）
-- [x] `[permission.rs]` 環境変数解析エラー時の厳格な処理
-- [x] `[main.rs]` 機密情報のログ出力をdebugレベルへ
-- [x] `[複数]` DateTimeパース処理のヘルパー関数化
-- [x] `[permission.rs]` PermissionにCopyトレイト実装、clone()削除
-- [x] `[memory_store.rs]` LIKE検索の最適化（FTSまたは前方一致）
-- [x] `[user_roles.rs]` キャッシュクリーンアップの定期実行
-- [x] `[memory_store.rs/user_settings.rs]` 共通DB操作パターンをトレイト化
-- [x] `[複数]` DateTimeパースエラー時のログ出力追加
-- [x] `[main.rs/permission.rs]` 管理者判定ロジックの統合
-- [x] `[複数]` Mutexロックエラー処理のヘルパー化
-- [x] `[複数]` 過剰な#![allow(dead_code)]の削除
-- [x] `[permission.rs]` SuperUser関連ロジックのテスト追加
-- [x] `[memory_store.rs]` ページネーション(OFFSET)実装
-
-### Minor（9件）
-
-- [x] `[user_settings.rs]` SQLiteファイルパーミッション設定
-- [x] `[role_config.rs]` JSONファイル保存時のパーミッション制限
-- [x] `[user_roles.rs]` キャッシュTTLを環境変数化
-- [x] `[複数]` エラーメッセージから内部情報を隠蔽
-- [x] `[複数]` 冗長なパス存在チェック削除
-- [x] `[複数]` ログレベルの統一
-- [x] `[role_config.rs]` サンプルロールIDを定数化
-- [x] `[複数]` テストアサーションにメッセージ追加
-- [x] `[memory_store.rs]` list_memories_by_categoryテスト追加
+1. `src/llm/claude.rs` を作成
+2. `LLMClient` traitを実装
+3. `LLM_PROVIDER=claude` で切り替え
 
 ---
 
 ## 将来機能（Backlog）
 
-- v1.4.0: メモリエクスポート（Markdown/JSON）
-- v1.5.0: チャンネル毎設定
-- v2.0.0: マルチサーバー対応
+- v2.1.0: マルチサーバー対応
+- v2.2.0: Web UI（ダッシュボード）

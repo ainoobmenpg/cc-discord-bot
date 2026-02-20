@@ -1,8 +1,11 @@
 mod api;
+mod channel_settings;
 mod commands;
 mod datetime_utils;
 mod glm;
+mod llm;
 mod history;
+mod mcp_client;
 mod memory;
 mod memory_store;
 mod permission;
@@ -12,12 +15,15 @@ mod role_config;
 mod scheduler;
 mod schedule_store;
 mod session;
+mod skills;
 mod tool;
 mod tools;
 mod user_roles;
 mod user_settings;
+mod streaming;
 mod validation;
 
+use llm::LLMClient;
 use memory_store::MemoryStore;
 use scheduler::Scheduler;
 use schedule_store::ScheduleStore;
@@ -34,7 +40,7 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
 pub struct Handler {
-    glm_client: glm::GLMClient,
+    glm_client: Arc<dyn LLMClient>,
     session_manager: Arc<Mutex<SessionManager>>,
     scheduler: Arc<Scheduler>,
     schedule_store: Arc<RwLock<ScheduleStore>>,
@@ -44,6 +50,8 @@ pub struct Handler {
     memory_store: Arc<MemoryStore>,
     /// ユーザー設定ストア
     pub user_settings_store: Arc<user_settings::UserSettingsStore>,
+    /// チャンネル設定ストア
+    pub channel_settings_store: Option<Arc<channel_settings::ChannelSettingsStore>>,
     #[allow(dead_code)]
     http: Arc<Http>,
     /// 処理済みメッセージID（重複防止）
@@ -55,16 +63,103 @@ pub struct Handler {
     pub role_config: Arc<RwLock<role_config::RoleConfig>>,
     /// ユーザーロールキャッシュ
     pub user_role_cache: user_roles::UserRoleCache,
+    /// メッセージ監視モードが有効かどうか
+    pub message_watch_mode: bool,
+    /// ツール実行の確認が必要かどうか
+    pub tool_confirmation_required: bool,
+    /// ボットのユーザーID（メンション検出用）
+    pub bot_user_id: Option<u64>,
 }
 
 #[serenity::async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, _ctx: Context, msg: Message) {
-        // ボットメッセージは無視（Slash Commandsのみ使用）
+    async fn message(&self, ctx: Context, msg: Message) {
+        // ボットメッセージは無視
         if msg.author.bot {
             return;
         }
-        debug!("Received message (ignored - use Slash Commands): {}", msg.content);
+
+        // メッセージ監視モードが無効な場合は無視
+        if !self.message_watch_mode {
+            debug!("Received message (watch mode disabled): {}", msg.content);
+            return;
+        }
+
+        // メンションされているかチェック
+        let is_mentioned = msg.mentions.iter().any(|user| {
+            self.bot_user_id.map_or(false, |bot_id| user.id.get() == bot_id)
+        });
+
+        // ボットへのメンションまたはチャンネルでの直接発言に反応
+        // DMの場合は常に反応
+        let is_dm = msg.guild_id.is_none();
+        if !is_mentioned && !is_dm {
+            debug!("Message not mentioning bot, ignoring");
+            return;
+        }
+
+        info!("Processing message in watch mode from user {}: {}", msg.author.id, msg.content);
+
+        // メンションを除去してクリーンな質問を取得
+        let content = self.remove_bot_mentions(&msg.content);
+
+        if content.trim().is_empty() {
+            if let Err(e) = msg.reply(&ctx.http, "何か質問がありますか？").await {
+                error!("Failed to send reply: {}", e);
+            }
+            return;
+        }
+
+        // タイピングインジケーターを表示
+        let _ = msg.channel_id.broadcast_typing(&ctx.http).await;
+
+        // セッションとツールコンテキストを作成
+        let user_id = msg.author.id.get();
+        let channel_id = msg.channel_id.get();
+        let user_name = msg.author.name.clone();
+
+        let session_key = session::SessionKey::new(user_id, channel_id);
+        let messages = {
+            let manager = &self.session_manager;
+            let mut mgr = manager.lock().await;
+            let session = mgr.get_or_create(session_key.clone());
+            session.history.push(history::ChatMessage::user(content.clone()));
+            session.history.to_vec()
+        };
+
+        let tool_context = tool::ToolContext {
+            user_id,
+            user_name,
+            channel_id,
+            base_output_dir: self.base_output_dir.clone(),
+            custom_output_subdir: None,
+        };
+
+        // LLMに問い合わせ
+        match self.glm_client.chat_with_tools(messages, &tool_context).await {
+            Ok(response) => {
+                // セッションに追加
+                let manager = &self.session_manager;
+                let mut mgr = manager.lock().await;
+                if let Some(session) = mgr.get_mut(&session_key) {
+                    session.history.push(history::ChatMessage::assistant(&response));
+                }
+
+                // 応答を送信（2000文字制限で分割）
+                let response_parts = self.split_response(&response);
+                for part in response_parts {
+                    if let Err(e) = msg.reply(&ctx.http, &part).await {
+                        error!("Failed to send reply: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("LLM error in watch mode: {}", e);
+                if let Err(e) = msg.reply(&ctx.http, format!("エラーが発生しました: {}", e)).await {
+                    error!("Failed to send error reply: {}", e);
+                }
+            }
+        }
     }
 
     async fn ready(&self, ctx: Context, ready: serenity::model::gateway::Ready) {
@@ -110,6 +205,26 @@ impl Handler {
             error!("Failed to respond to slash command: {}", e);
         }
     }
+
+    /// ボットへのメンションを除去
+    fn remove_bot_mentions(&self, content: &str) -> String {
+        if let Some(bot_id) = self.bot_user_id {
+            let mention_pattern = format!("<@{}>", bot_id);
+            let mention_pattern_nick = format!("<@!{}>", bot_id);
+            content
+                .replace(&mention_pattern, "")
+                .replace(&mention_pattern_nick, "")
+                .trim()
+                .to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    /// 応答を2000文字制限で分割
+    fn split_response(&self, response: &str) -> Vec<String> {
+        streaming::split_message(response, 2000)
+    }
 }
 
 #[tokio::main]
@@ -139,8 +254,8 @@ async fn main() {
     debug!("Base output directory: {}", base_output_dir);
 
     // GLMクライアントを作成
-    let glm_client = match glm::GLMClient::new() {
-        Ok(client) => client,
+    let glm_client: Arc<dyn LLMClient> = match llm::GLMClientImpl::new() {
+        Ok(client) => Arc::new(client),
         Err(e) => {
             error!("Failed to create GLM client: {}", e);
             return;
@@ -321,6 +436,17 @@ async fn main() {
         })
     );
 
+    // チャンネル設定ストアを読み込み
+    let channel_settings_store = match channel_settings::ChannelSettingsStore::load("data") {
+        Ok(store) => {
+            info!("Channel settings store loaded");
+            Some(Arc::new(store))
+        }
+        Err(e) => {
+            error!("Failed to load channel settings store: {}, using None", e);
+            None
+        }
+    };
     // ユーザーロールキャッシュを作成
     let user_role_cache = user_roles::UserRoleCache::new();
 
@@ -334,6 +460,17 @@ async fn main() {
         }
     });
 
+    // 環境変数からUX機能の設定を読み込み
+    let message_watch_mode = env::var("MESSAGE_WATCH_MODE")
+        .map(|v| v.to_lowercase() == "true" || v == "1")
+        .unwrap_or(false);
+    let tool_confirmation_required = env::var("TOOL_CONFIRMATION_REQUIRED")
+        .map(|v| v.to_lowercase() == "true" || v == "1")
+        .unwrap_or(false);
+
+    info!("UX features: message_watch_mode={}, tool_confirmation_required={}",
+          message_watch_mode, tool_confirmation_required);
+
     let handler = Handler {
         glm_client: glm_client.clone(),
         session_manager: session_manager.clone(),
@@ -343,11 +480,15 @@ async fn main() {
         permission_manager,
         memory_store: memory_store.clone(),
         user_settings_store: user_settings_store.clone(),
+        channel_settings_store,
         http,
         processed_messages: Arc::new(Mutex::new(HashSet::new())),
         base_output_dir: base_output_dir.clone(),
         role_config,
         user_role_cache,
+        message_watch_mode,
+        tool_confirmation_required,
+        bot_user_id: None, // Will be set in ready event
     };
 
     // APIサーバーを並行起動

@@ -3,6 +3,8 @@
 use serenity::builder::{CreateCommand, CreateCommandOption};
 use serenity::model::application::{CommandDataOptionValue, CommandInteraction, CommandOptionType};
 use serenity::prelude::*;
+use std::fs;
+use std::path::Path;
 
 use crate::memory_store;
 use crate::Handler;
@@ -47,6 +49,13 @@ pub fn register() -> CreateCommand {
                         .required(true),
                 ),
         )
+        .add_option(
+            CreateCommandOption::new(CommandOptionType::SubCommand, "export", "メモリエクスポート")
+                .add_sub_option(
+                    CreateCommandOption::new(CommandOptionType::String, "format", "形式 (markdown または json)")
+                        .required(true),
+                ),
+        )
 }
 
 /// /memory コマンドの実行
@@ -71,6 +80,7 @@ pub async fn run(_ctx: &Context, interaction: &CommandInteraction, handler: &Han
         Some(("list", sub_opts)) => handle_list(user_id, sub_opts, &handler.memory_store),
         Some(("search", sub_opts)) => handle_search(user_id, sub_opts, &handler.memory_store),
         Some(("delete", sub_opts)) => handle_delete(user_id, sub_opts, &handler.memory_store),
+        Some(("export", sub_opts)) => handle_export(user_id, sub_opts, &handler.memory_store, &handler.base_output_dir),
         _ => "不明なサブコマンドです。".to_string(),
     }
 }
@@ -294,6 +304,78 @@ fn handle_delete(
             Err(e) => format!("エラー: {}", e),
         },
         None => "IDを指定してください。".to_string(),
+    }
+}
+
+/// メモリエクスポート
+fn handle_export(
+    user_id: u64,
+    sub_opts: &[serenity::model::application::CommandDataOption],
+    memory_store: &memory_store::MemoryStore,
+    base_output_dir: &str,
+) -> String {
+    // formatオプションを取得
+    let format = sub_opts
+        .iter()
+        .find(|opt| opt.name == "format")
+        .and_then(|opt| {
+            if let CommandDataOptionValue::String(s) = &opt.value {
+                Some(s.to_lowercase())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // エクスポートディレクトリを作成
+    let exports_dir = Path::new(base_output_dir).join("exports");
+    if let Err(e) = fs::create_dir_all(&exports_dir) {
+        return format!("エクスポートディレクトリの作成に失敗しました: {}", e);
+    }
+
+    // タイムスタンプ生成
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+
+    match format.as_str() {
+        "markdown" | "md" => {
+            match memory_store.export_to_markdown(user_id) {
+                Ok(content) => {
+                    let filename = format!("memories_{}_{}.md", user_id, timestamp);
+                    let filepath = exports_dir.join(&filename);
+
+                    match fs::write(&filepath, &content) {
+                        Ok(_) => {
+                            format!(
+                                "メモリをMarkdown形式でエクスポートしました。\nファイル: {}",
+                                filepath.display()
+                            )
+                        }
+                        Err(e) => format!("ファイルの書き込みに失敗しました: {}", e),
+                    }
+                }
+                Err(e) => format!("エクスポートエラー: {}", e),
+            }
+        }
+        "json" => {
+            match memory_store.export_to_json(user_id) {
+                Ok(content) => {
+                    let filename = format!("memories_{}_{}.json", user_id, timestamp);
+                    let filepath = exports_dir.join(&filename);
+
+                    match fs::write(&filepath, &content) {
+                        Ok(_) => {
+                            format!(
+                                "メモリをJSON形式でエクスポートしました。\nファイル: {}",
+                                filepath.display()
+                            )
+                        }
+                        Err(e) => format!("ファイルの書き込みに失敗しました: {}", e),
+                    }
+                }
+                Err(e) => format!("エクスポートエラー: {}", e),
+            }
+        }
+        _ => "形式は 'markdown' または 'json' を指定してください。".to_string(),
     }
 }
 
