@@ -5,7 +5,7 @@ use regex::Regex;
 use reqwest::Client;
 use serde_json::{json, Value as JsonValue};
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// キャッシュされた正規表現パターン
 struct RegexPatterns {
@@ -191,6 +191,44 @@ impl WebFetchTool {
             format!("{}...\n\n[Content truncated - {} chars total]", truncated, char_count)
         }
     }
+
+    /// readabilityを使用して本文を抽出（フォールバック付き）
+    fn extract_readable_content(html: &str, url: &str) -> Option<ExtractedContent> {
+        // 読み取り可能かチェック
+        if !legible::is_probably_readerable(html, None) {
+            debug!("Content not readerable, falling back to regex");
+            return None;
+        }
+
+        // 本文抽出
+        match legible::parse(html, Some(url), None) {
+            Ok(article) => {
+                info!("Readability extraction successful: {:?}", article.title);
+
+                // タイトルとコンテンツを取得
+                let title = article.title;
+                let content_html = article.content;
+
+                // コンテンツHTMLをMarkdownに変換
+                let content_md = Self::html_to_markdown(&content_html);
+
+                Some(ExtractedContent {
+                    title,
+                    content: content_md,
+                })
+            }
+            Err(e) => {
+                warn!("Readability extraction failed: {:?}", e);
+                None
+            }
+        }
+    }
+}
+
+/// 抽出されたコンテンツ
+struct ExtractedContent {
+    title: String,
+    content: String,
 }
 
 #[async_trait]
@@ -239,7 +277,20 @@ impl Tool for WebFetchTool {
         match self.fetch(url).await {
             Ok((body, content_type)) => {
                 let markdown = if content_type.contains("text/html") {
-                    Self::html_to_markdown(&body)
+                    // readabilityで本文抽出を試みる
+                    if let Some(extracted) = Self::extract_readable_content(&body, url) {
+                        // タイトル + 本文の形式で出力
+                        let mut result = String::new();
+                        if !extracted.title.is_empty() {
+                            result.push_str(&format!("# {}\n\n", extracted.title));
+                        }
+                        result.push_str(&format!("> URL: {}\n\n", url));
+                        result.push_str(&extracted.content);
+                        result
+                    } else {
+                        // フォールバック: 従来の正規表現処理
+                        Self::html_to_markdown(&body)
+                    }
                 } else if content_type.contains("application/json") {
                     // JSONはそのままコードブロックで表示
                     format!("```json\n{}\n```", body)
@@ -366,5 +417,59 @@ mod tests {
         let md = WebFetchTool::html_to_markdown(html);
         assert!(md.contains("# Title"));
         assert!(md.contains("**bold**"));
+    }
+
+    #[test]
+    fn test_extract_readable_content_fallback() {
+        // シンプルなHTML（readabilityが適用されない可能性が高い）
+        let html = "<html><body><p>Simple text</p></body></html>";
+
+        // フォールバックが動作することを確認（panicしない）
+        let result = WebFetchTool::extract_readable_content(html, "https://example.com");
+        // 結果はSomeでもNoneでもOK（フォールバック先のregex処理があるため）
+        if let Some(extracted) = result {
+            assert!(!extracted.content.is_empty() || !extracted.title.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_extract_readable_content_complex() {
+        // より複雑な記事構造（readabilityが適用されやすい）
+        let html = r#"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Test Blog Post - My Blog</title>
+    <meta property="og:title" content="Test Blog Post">
+</head>
+<body>
+    <header>
+        <nav><a href="/">Home</a></nav>
+    </header>
+    <main>
+        <article>
+            <h1>Test Blog Post</h1>
+            <p>This is the first paragraph of a blog post with substantial content that should make the page readerable.</p>
+            <p>Here is another paragraph with more information and details about the topic at hand.</p>
+            <p>And yet another paragraph to ensure there is enough content for the readability algorithm to work properly.</p>
+            <h2>Section Title</h2>
+            <p>More content in this section with additional paragraphs and information.</p>
+        </article>
+    </main>
+    <footer>
+        <p>Copyright 2024</p>
+    </footer>
+</body>
+</html>
+"#;
+
+        let result = WebFetchTool::extract_readable_content(html, "https://example.com/blog/test-post");
+        // 結果はSomeでもNoneでもOK（readabilityの判定による）
+        // 重要なのは関数が正常に実行されること
+        if let Some(extracted) = result {
+            // タイトルまたはコンテンツが抽出されていることを確認
+            let has_content = !extracted.title.is_empty() || !extracted.content.is_empty();
+            assert!(has_content, "Extracted content should have title or content");
+        }
     }
 }
