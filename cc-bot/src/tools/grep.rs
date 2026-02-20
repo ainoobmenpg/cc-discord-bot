@@ -126,16 +126,20 @@ impl GrepTool {
                     .to_string_lossy()
                     .to_string();
 
-                // ファイル内検索
-                match Self::search_in_file(path.to_str().unwrap(), pattern, case_insensitive).await {
-                    Ok(file_matches) => {
-                        for (line_num, line) in file_matches {
-                            results.push((relative_path.clone(), line_num, line));
+                // ファイル内検索（パスがUTF-8でない場合はスキップ）
+                if let Some(path_str) = path.to_str() {
+                    match Self::search_in_file(path_str, pattern, case_insensitive).await {
+                        Ok(file_matches) => {
+                            for (line_num, line) in file_matches {
+                                results.push((relative_path.clone(), line_num, line));
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Skipping file {} due to error: {}", path.display(), e);
                         }
                     }
-                    Err(e) => {
-                        debug!("Skipping file {} due to error: {}", path.display(), e);
-                    }
+                } else {
+                    debug!("Skipping file with non-UTF-8 path: {}", path.display());
                 }
             }
         }
