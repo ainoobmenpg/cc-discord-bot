@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::{header, Method, Request, StatusCode},
+    http::{header, HeaderValue, Method, Request, StatusCode},
     middleware::{self, Next},
     response::{Json, Response},
     routing::{delete, get, post},
@@ -10,9 +10,15 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::sync::{Mutex, RwLock};
+use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tower_http::set_header::SetResponseHeaderLayer;
+use tracing::{debug, error, info, warn};
+
+use crate::rate_limiter::RateLimiter;
+use crate::security::mask_secrets;
 
 /// APIキー認証ミドルウェア
 async fn auth_middleware(
@@ -40,7 +46,8 @@ async fn auth_middleware(
     match auth_header {
         Some(h) if h.starts_with("Bearer ") => {
             let token = &h[7..];
-            if token == expected_api_key {
+            // 定数時間比較でタイミング攻撃を防止
+            if token.as_bytes().ct_eq(expected_api_key.as_bytes()).into() {
                 Ok(next.run(request).await)
             } else {
                 warn!("Invalid API key attempt");
@@ -59,6 +66,65 @@ async fn auth_middleware(
             }),
         )),
     }
+}
+
+/// レートリミットミドルウェア
+///
+/// APIリクエストのレートリミットを行い、DoS攻撃を防止する。
+/// APIキー + クライアントIPの組み合わせで識別。
+async fn rate_limit_middleware(
+    State(state): State<Arc<ApiState>>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    // X-Forwarded-For ヘッダーからクライアントIPを取得（プロキシ経由の場合）
+    let client_ip = request
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // APIキー認証後なのでAPIキーハッシュを使用
+    let api_key_hash = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .map(|h| {
+            let mut hasher = DefaultHasher::new();
+            h.hash(&mut hasher);
+            hasher.finish()
+        })
+        .unwrap_or(0);
+
+    // APIキー + IP の組み合わせでクライアントを一意に識別
+    let mut hasher = DefaultHasher::new();
+    api_key_hash.hash(&mut hasher);
+    client_ip.hash(&mut hasher);
+    let client_id = hasher.finish();
+
+    let mut limiter = state.rate_limiter.lock().await;
+
+    if !limiter.check(client_id) {
+        let retry_after = limiter.retry_after(client_id).unwrap_or(60);
+        warn!("API rate limit exceeded for client (ip={})", client_ip);
+
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorResponse {
+                error: format!("Rate limit exceeded. Retry after {} seconds.", retry_after),
+            }),
+        ));
+    }
+
+    limiter.record(client_id);
+    drop(limiter); // ロックを解放
+
+    Ok(next.run(request).await)
 }
 
 /// メッセージ長の最大値
@@ -97,6 +163,8 @@ pub struct ApiState {
     pub schedule_store: Arc<RwLock<ScheduleStore>>,
     pub memory_store: Arc<MemoryStore>,
     pub base_output_dir: String,
+    /// レートリミッター（DoS攻撃防止）
+    pub rate_limiter: Arc<Mutex<RateLimiter>>,
 }
 
 /// ヘルスチェックレスポンス
@@ -206,8 +274,36 @@ pub fn create_router(state: ApiState) -> Router {
         .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
+    // セキュリティヘッダー
+    let security_headers = ServiceBuilder::new()
+        // Content-Security-Policy: JSON API用の厳格なポリシー
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+        ))
+        // X-Content-Type-Options: nosniff
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        ))
+        // X-Frame-Options: DENY
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        ))
+        // X-XSS-Protection: 1; mode=block (legacy but still useful)
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("x-xss-protection"),
+            HeaderValue::from_static("1; mode=block"),
+        ))
+        // Strict-Transport-Security: max-age=31536000; includeSubDomains
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("strict-transport-security"),
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ));
+
     Router::new()
-        // ヘルスチェック（認証不要）
+        // ヘルスチェック（認証不要、レートリミットなし）
         .route("/api/health", get(health))
         // 認証が必要なルート
         .nest(
@@ -222,8 +318,15 @@ pub fn create_router(state: ApiState) -> Router {
                 .route("/memories", get(list_memories).post(create_memory))
                 .route("/memories/search", get(search_memories))
                 .route("/memories/{id}", delete(delete_memory))
-                .layer(middleware::from_fn(auth_middleware)),
+                // 認証ミドルウェア
+                .layer(middleware::from_fn(auth_middleware))
+                // レートリミットミドルウェア
+                .route_layer(middleware::from_fn_with_state(
+                    Arc::new(state.clone()),
+                    rate_limit_middleware,
+                )),
         )
+        .layer(security_headers)
         .layer(cors)
         .with_state(Arc::new(state))
 }
@@ -254,7 +357,7 @@ async fn chat(
     let user_id = req.user_id.unwrap_or(0);
     let channel_id = req.channel_id.unwrap_or(0);
 
-    info!("API chat request from user {}: {}", user_id, req.message);
+    info!("API chat request from user {}: {}", user_id, mask_secrets(&req.message));
 
     // メッセージを作成
     let messages = vec![ChatMessage::user(req.message.clone())];

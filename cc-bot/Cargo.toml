@@ -19,13 +19,15 @@ cron = { version = "0.15.0", features = ["serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.6", features = ["cors", "set-header"] }
 regex = "1"
 # MCP Protocol support
 rmcp = { version = "0.16", features = ["client", "transport-child-process"] }
 # Web content extraction (readability)
 legible = "0.4"
 anyhow = "1"
+# Security: Constant-time comparison for timing attack prevention
+subtle = "2"
 once_cell = "1.21.3"
 
 [dev-dependencies]

@@ -81,17 +81,15 @@ impl Tool for ListFilesTool {
         // ディレクトリ存在確認
         let path_obj = Path::new(path);
         if !path_obj.exists() {
-            return Err(ToolError::ExecutionFailed(format!(
-                "Directory not found: {}",
-                path
-            )));
+            return Err(ToolError::ExecutionFailed(
+                "Directory not found. Please check the path.".to_string()
+            ));
         }
 
         if !path_obj.is_dir() {
-            return Err(ToolError::ExecutionFailed(format!(
-                "Not a directory: {}",
-                path
-            )));
+            return Err(ToolError::ExecutionFailed(
+                "The specified path is not a directory.".to_string()
+            ));
         }
 
         // ディレクトリ読み込み
@@ -99,10 +97,9 @@ impl Tool for ListFilesTool {
             Ok(entries) => entries,
             Err(e) => {
                 warn!("Failed to read directory {}: {}", path, e);
-                return Err(ToolError::ExecutionFailed(format!(
-                    "Failed to read directory: {}",
-                    e
-                )));
+                return Err(ToolError::ExecutionFailed(
+                    "Failed to read directory. Please check the path and permissions.".to_string()
+                ));
             }
         };
 

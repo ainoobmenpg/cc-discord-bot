@@ -3,6 +3,7 @@
 //! 智譜AI（Zhipu AI）のGLM-4.7モデルに接続するLLMClient実装
 
 use crate::history::ChatMessage;
+use crate::security::mask_secrets;
 use crate::tool::{SharedToolManager, ToolContext, ToolDefinition, ToolManager};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -152,7 +153,7 @@ impl LLMClient for GLMClientImpl {
             tools: if tools.is_empty() { None } else { Some(tools) },
         };
 
-        debug!("Request: {}", serde_json::to_string(&request)?);
+        debug!("Request: {}", mask_secrets(&serde_json::to_string(&request)?));
 
         let http_response = self
             .client
@@ -177,7 +178,7 @@ impl LLMClient for GLMClientImpl {
         }
 
         let response_text = http_response.text().await?;
-        debug!("Response: {}", response_text);
+        debug!("Response: {}", mask_secrets(&response_text));
 
         let chat_response: ChatResponse = serde_json::from_str(&response_text)?;
 

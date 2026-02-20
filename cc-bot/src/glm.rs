@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::history::ChatMessage;
+use crate::security::mask_secrets;
 use crate::tool::{ToolContext, ToolDefinition, ToolManager};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -133,7 +134,7 @@ impl GLMClient {
             tools: if tools.is_empty() { None } else { Some(tools) },
         };
 
-        debug!("Request: {}", serde_json::to_string(&request)?);
+        debug!("Request: {}", mask_secrets(&serde_json::to_string(&request)?));
 
         let http_response = self
             .client
@@ -155,7 +156,7 @@ impl GLMClient {
         }
 
         let response_text = http_response.text().await?;
-        debug!("Response: {}", response_text);
+        debug!("Response: {}", mask_secrets(&response_text));
 
         let chat_response: ChatResponse = serde_json::from_str(&response_text)?;
 

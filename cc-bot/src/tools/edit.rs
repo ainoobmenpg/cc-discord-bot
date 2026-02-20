@@ -129,10 +129,9 @@ impl Tool for EditTool {
             Ok(c) => c,
             Err(e) => {
                 warn!("Failed to read file {}: {}", user_path, e);
-                return Err(ToolError::ExecutionFailed(format!(
-                    "Failed to read file: {}",
-                    e
-                )));
+                return Err(ToolError::ExecutionFailed(
+                    "Failed to read file. Please check the path and permissions.".to_string()
+                ));
             }
         };
 
@@ -180,10 +179,9 @@ impl Tool for EditTool {
             }
             Err(e) => {
                 warn!("Failed to write file {}: {}", user_path, e);
-                Err(ToolError::ExecutionFailed(format!(
-                    "Failed to write file: {}",
-                    e
-                )))
+                Err(ToolError::ExecutionFailed(
+                    "Failed to write file. Please check the path and try again.".to_string()
+                ))
             }
         }
     }

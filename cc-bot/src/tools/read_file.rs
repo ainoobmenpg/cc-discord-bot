@@ -83,10 +83,9 @@ impl Tool for ReadFileTool {
         // ファイル存在確認
         let path_obj = Path::new(path);
         if !path_obj.exists() {
-            return Err(ToolError::ExecutionFailed(format!(
-                "File not found: {}",
-                path
-            )));
+            return Err(ToolError::ExecutionFailed(
+                "File not found. Please check the path.".to_string()
+            ));
         }
 
         // ファイル読み込み
@@ -97,10 +96,10 @@ impl Tool for ReadFileTool {
             }
             Err(e) => {
                 warn!("Failed to read file {}: {}", path, e);
-                Err(ToolError::ExecutionFailed(format!(
-                    "Failed to read file: {}",
-                    e
-                )))
+                // ユーザーには一般的なエラーメッセージを返す
+                Err(ToolError::ExecutionFailed(
+                    "Failed to read file. Please check the path and permissions.".to_string()
+                ))
             }
         }
     }

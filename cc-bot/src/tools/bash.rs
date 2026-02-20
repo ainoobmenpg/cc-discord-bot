@@ -95,7 +95,7 @@ impl BashTool {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                 Ok((stdout, stderr, output.status.success()))
             }
-            Ok(Err(e)) => Err(format!("Failed to execute command: {}", e)),
+            Ok(Err(e)) => Err("Failed to execute command. Please check the command syntax.".to_string()),
             Err(_) => Err(format!("Command timed out after {} seconds", timeout_secs)),
         }
     }

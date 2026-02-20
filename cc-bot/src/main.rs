@@ -14,6 +14,7 @@ mod rate_limiter;
 mod role_config;
 mod scheduler;
 mod schedule_store;
+mod security;
 mod session;
 mod skills;
 mod tool;
@@ -44,7 +45,7 @@ pub struct Handler {
     session_manager: Arc<Mutex<SessionManager>>,
     scheduler: Arc<Scheduler>,
     schedule_store: Arc<RwLock<ScheduleStore>>,
-    #[allow(dead_code)]
+    /// レートリミッター（DoS攻撃防止）
     rate_limiter: Arc<Mutex<rate_limiter::RateLimiter>>,
     permission_manager: Arc<RwLock<permission::PermissionManager>>,
     memory_store: Arc<MemoryStore>,
@@ -180,6 +181,36 @@ impl EventHandler for Handler {
 impl Handler {
     /// Slash Commandを処理
     async fn handle_slash_command(&self, ctx: &Context, command: &CommandInteraction) {
+        let user_id = command.user.id.get();
+
+        // レートリミットチェック
+        {
+            let mut limiter = self.rate_limiter.lock().await;
+            if !limiter.check(user_id) {
+                let retry_after = limiter.retry_after(user_id).unwrap_or(60);
+                warn!("Rate limit exceeded for user {}", user_id);
+
+                let response = format!(
+                    "リクエストが多すぎます。{}秒後にお試しください。",
+                    retry_after
+                );
+
+                if let Err(e) = command
+                    .create_response(
+                        &ctx.http,
+                        serenity::builder::CreateInteractionResponse::Message(
+                            serenity::builder::CreateInteractionResponseMessage::new().content(&response),
+                        ),
+                    )
+                    .await
+                {
+                    error!("Failed to send rate limit response: {}", e);
+                }
+                return;
+            }
+            limiter.record(user_id);
+        }
+
         match command.data.name.as_str() {
             // askコマンドは独自に応答処理を行う（deferred responseパターン）
             "ask" => {
@@ -511,6 +542,9 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3000);
 
+    // API用レートリミッター
+    let api_rate_limiter = Arc::new(Mutex::new(rate_limiter::RateLimiter::new()));
+
     let api_state = api::ApiState {
         glm_client,
         session_manager,
@@ -518,6 +552,7 @@ async fn main() {
         schedule_store,
         memory_store,
         base_output_dir,
+        rate_limiter: api_rate_limiter,
     };
 
     tokio::spawn(async move {

@@ -117,18 +117,19 @@ impl Tool for WriteFileTool {
         match fs::write(&user_path, content).await {
             Ok(_) => {
                 debug!("Successfully wrote to {}", user_path);
+                // ユーザーには相対パスのみを返す（内部パスを隠蔽）
                 Ok(ToolResult::success(format!(
                     "Successfully wrote {} bytes to {}",
                     content.len(),
-                    user_path
+                    path
                 )))
             }
             Err(e) => {
                 warn!("Failed to write file {}: {}", user_path, e);
-                Err(ToolError::ExecutionFailed(format!(
-                    "Failed to write file: {}",
-                    e
-                )))
+                // ユーザーには一般的なエラーメッセージを返す
+                Err(ToolError::ExecutionFailed(
+                    "Failed to write file. Please check the path and try again.".to_string()
+                ))
             }
         }
     }
